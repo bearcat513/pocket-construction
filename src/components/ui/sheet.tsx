@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { AlertCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Portal } from "@/components/ui/portal";
+import { Portal, useEscapeLayer } from "@/components/ui/portal";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -10,6 +10,12 @@ type Props = {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /**
+   * What went wrong with the last save, shown directly above the footer — next
+   * to the button that was pressed, rather than at the top of a body the
+   * person has scrolled away from.
+   */
+  error?: string;
   /** Widen it for a form that genuinely needs the room. */
   className?: string;
 };
@@ -45,18 +51,17 @@ type Props = {
  * entrance animation, so a panel left where it was written is fixed to that
  * screen's box and ends at the bottom of the content. See `Portal`.
  */
-export function Sheet({ title, description, onClose, children, footer, className }: Props) {
+export function Sheet({ title, description, onClose, children, footer, error, className }: Props) {
+  useEscapeLayer(onClose);
+
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    // The page behind must not scroll under the panel.
+    // The page behind must not scroll under it.
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <Portal>
@@ -94,6 +99,16 @@ export function Sheet({ title, description, onClose, children, footer, className
 
           {/* The only scrolling region: the header and footer stay put. */}
           <div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
+
+          {error && (
+            <div
+              role="alert"
+              className="flex shrink-0 items-start gap-2 border-t border-flare/30 bg-flare/10 px-4 py-2 text-sm text-flare"
+            >
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <span className="min-w-0">{error}</span>
+            </div>
+          )}
 
           {footer && (
             <footer className="flex shrink-0 items-center justify-end gap-2 border-t px-4 py-3">{footer}</footer>

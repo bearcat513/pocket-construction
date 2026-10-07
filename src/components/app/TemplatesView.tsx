@@ -29,6 +29,7 @@ import {
   type TemplateKind,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { DISCARD, useFeedback, useUnsavedChanges } from "./feedback";
 
 /** The token vocabulary a template of this kind may use. */
 const vocabulary = (kind: TemplateKind): { scalar: TokenDescription[]; line: TokenDescription[]; title: string } =>
@@ -46,7 +47,6 @@ type Props = {
   onChanged: () => Promise<void>;
   onShare: (kind: Shareable, id: string, title: string) => void;
   onError: (error: unknown) => void;
-  confirmed: (message: string) => boolean;
 };
 
 /**
@@ -65,7 +65,9 @@ type Props = {
  * hand. Anything the app does not recognise is called out as you type, because
  * an unresolved token renders as a blank in a document going to a customer.
  */
-export function TemplatesView({ templates, sellerName, sellerEmail, locale, myId, onChanged, onShare, onError, confirmed }: Props) {
+export function TemplatesView({ sellerName, sellerEmail, locale, myId, onChanged, onShare, onError, ...props }: Props) {
+  const { pending, removeWithUndo, confirm } = useFeedback();
+  const templates = useMemo(() => props.templates.filter(template => !pending.has(template.id)), [props.templates, pending]);
   const [activeId, setActiveId] = useState<string | null>(templates[0]?.id ?? null);
   /** Which kind the list is showing, and what New makes. */
   const [listKind, setListKind] = useState<TemplateKind>(templates[0]?.kind ?? "quote");
@@ -81,6 +83,19 @@ export function TemplatesView({ templates, sellerName, sellerEmail, locale, myId
   const editing =
     draft ?? (active ? { name: active.name, kind: active.kind, format: active.format, body: active.body } : null);
   const mine = !active || active.ownerId === myId;
+
+  /** A new template not yet saved, or a saved one whose draft differs from it. */
+  const dirty =
+    draft !== null &&
+    (!active ||
+      draft.name !== active.name ||
+      draft.kind !== active.kind ||
+      draft.format !== active.format ||
+      draft.body !== active.body);
+  useUnsavedChanges(dirty);
+
+  /** Moving to another template, or starting one, asks before dropping edits. */
+  const leaveDraft = async () => !dirty || (await confirm(DISCARD));
 
   const isPdf = editing?.format === "pdf";
   const kind = editing?.kind ?? "quote";
@@ -114,7 +129,8 @@ export function TemplatesView({ templates, sellerName, sellerEmail, locale, myId
       : quotePdfSource({ quote: specimenQuote(), ...seller });
   }, [kind, sellerName, sellerEmail, locale]);
 
-  const startNew = (newKind: TemplateKind) => {
+  const startNew = async (newKind: TemplateKind) => {
+    if (!(await leaveDraft())) return;
     setActiveId(null);
     setDraft({
       name: newKind === "invoice" ? "New invoice" : "New proposal",
@@ -133,14 +149,15 @@ export function TemplatesView({ templates, sellerName, sellerEmail, locale, myId
    * about it. It is a copy in the draft, not a saved record — nothing exists
    * until Save, exactly like New.
    */
-  const startFromExample = (name: string) => {
+  const startFromExample = async (name: string) => {
     const example = SAMPLE_TEMPLATES.find(entry => entry.name === name);
-    if (!example) return;
+    if (!example || !(await leaveDraft())) return;
     setActiveId(null);
     setDraft({ name: example.name, kind: example.kind, format: example.format, body: example.body });
   };
 
-  const open = (template: ProposalTemplate) => {
+  const open = async (template: ProposalTemplate) => {
+    if (template.id === activeId || !(await leaveDraft())) return;
     setActiveId(template.id);
     setDraft(null);
   };
@@ -170,16 +187,16 @@ export function TemplatesView({ templates, sellerName, sellerEmail, locale, myId
     }
   };
 
-  const remove = async (template: ProposalTemplate) => {
-    if (!confirmed(`Delete the template “${template.name}”?`)) return;
-    try {
-      await api.deleteProposalTemplate(template.id);
-      await onChanged();
-      setActiveId(null);
-      setDraft(null);
-    } catch (error) {
-      onError(error);
-    }
+  /** Gone from the list at once, deleted when the undo window closes. */
+  const remove = (template: ProposalTemplate) => {
+    setActiveId(null);
+    setDraft(null);
+    removeWithUndo({
+      id: template.id,
+      label: `Deleted the template “${template.name}”.`,
+      remove: () => api.deleteProposalTemplate(template.id),
+      done: onChanged,
+    });
   };
 
   const insert = (token: string) => editing && patch({ body: `${editing.body}{{${token}}}` });

@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Field } from "./common";
 import { api, type ApiKey, type IssuedApiKey } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { useFeedback } from "./feedback";
 
 /** The header a key travels in. Matches API_KEY_HEADER on the server. */
 const HEADER = "X-API-Key";
@@ -90,7 +91,8 @@ function IssuedKey({ issued, onDismiss }: { issued: IssuedApiKey; onDismiss: () 
  * response that created it, which is why issuing renders a banner rather than
  * adding a row and moving on.
  */
-export function ApiKeys({ confirmDestructive }: { confirmDestructive: boolean }) {
+export function ApiKeys() {
+  const { confirm } = useFeedback();
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [issued, setIssued] = useState<IssuedApiKey | null>(null);
   const [name, setName] = useState("");
@@ -139,12 +141,12 @@ export function ApiKeys({ confirmDestructive }: { confirmDestructive: boolean })
   async function revoke(key: ApiKey) {
     const label = key.name || "this key";
     // The same preference every other delete in the app honours.
-    if (
-      confirmDestructive &&
-      !window.confirm(`Revoke ${label}? Anything using it stops working on its next request.`)
-    ) {
-      return;
-    }
+    const sure = await confirm({
+      title: `Revoke ${label}?`,
+      message: "Anything using it stops working on its next request. A revoked key cannot be restored; you would issue a new one.",
+      confirmLabel: "Revoke key",
+    });
+    if (!sure) return;
 
     setRevoking(key.id);
     setError("");

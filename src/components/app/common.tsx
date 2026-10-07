@@ -236,3 +236,75 @@ export function Notice({ kind, lines, className }: { kind: NoticeKind; lines: st
 export function Money({ value, format, muted }: { value: number; format: Formatter; muted?: boolean }) {
   return <span className={cn("tabular-nums", muted && "text-muted-foreground")}>{format.money(value)}</span>;
 }
+
+/* -------------------------------- loading -------------------------------- */
+
+/**
+ * Rows of grey where a list will be. Drawn while the workspace is still being
+ * read, because an empty list drawn too early says "you have nothing" — and on
+ * the receivables screen, "nobody owes you anything".
+ */
+export function SkeletonRows({ rows = 6 }: { rows?: number }) {
+  return (
+    <div aria-hidden="true" className="divide-y">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="flex items-center gap-4 px-4 py-3">
+          <div className="h-3.5 w-1/3 animate-pulse rounded-sm bg-muted" />
+          <div className="h-3.5 w-1/5 animate-pulse rounded-sm bg-muted" />
+          <div className="ml-auto h-3.5 w-16 animate-pulse rounded-sm bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ScreenSkeleton() {
+  return (
+    <section role="status" aria-label="Loading" className="panel rounded-lg border">
+      <div className="seam flex items-center justify-between border-b px-4 py-3">
+        <div className="h-4 w-32 animate-pulse rounded-sm bg-muted" />
+        <div className="h-8 w-28 animate-pulse rounded-sm bg-muted" />
+      </div>
+      <SkeletonRows />
+    </section>
+  );
+}
+
+/* --------------------------------- links --------------------------------- */
+
+/**
+ * A record's name in a list, as a real link.
+ *
+ * A clickable `<tr>` is invisible to a screen reader and cannot be opened in a
+ * new tab. The row stays clickable for the mouse; this is what the keyboard,
+ * assistive technology and ⌘-click use. A plain click is handled in place.
+ */
+export function RowLink({
+  href,
+  onOpen,
+  className,
+  children,
+}: {
+  href: string;
+  onOpen: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      onClick={event => {
+        event.stopPropagation();
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        onOpen();
+      }}
+      className={cn(
+        "focus-visible:ring-ring/50 rounded-sm font-medium outline-none hover:underline focus-visible:ring-[3px]",
+        className,
+      )}
+    >
+      {children}
+    </a>
+  );
+}

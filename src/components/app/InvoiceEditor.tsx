@@ -43,6 +43,7 @@ import {
 } from "@/lib/types";
 import { localId, type CreditInput, type PaymentInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   /** null raises a new one; an id opens the one that exists. */
@@ -60,7 +61,6 @@ type Props = {
    */
   onCreated?: (invoice: Invoice) => void;
   onError: (error: unknown) => void;
-  confirmed: (message: string) => boolean;
 };
 
 /**
@@ -85,8 +85,8 @@ export function InvoiceEditor({
   onChanged,
   onCreated,
   onError,
-  confirmed,
 }: Props) {
+  const { confirm } = useFeedback();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(invoiceId !== null);
   const [busy, setBusy] = useState(false);
@@ -130,6 +130,22 @@ export function InvoiceEditor({
       live = false;
     };
   }, [invoiceId, onError]);
+
+  /** What the draft was when it was read or last saved, to tell an edit from a look. */
+  const baseline = invoice
+    ? {
+        accountId: invoice.customer.accountId ?? "",
+        poNumber: invoice.poNumber,
+        notes: invoice.notes,
+        internalNotes: invoice.internalNotes,
+        lines: invoice.lines,
+      }
+    : { accountId: "", poNumber: "", notes: "", internalNotes: "", lines: [] };
+  const dirty =
+    !loading &&
+    (!invoice || invoice.state === "draft") &&
+    JSON.stringify(baseline) !== JSON.stringify({ accountId, poNumber, notes, internalNotes, lines });
+  const back = useUnsavedChanges(dirty, onBack);
 
   const currency = invoice?.currency ?? accounts.find(one => one.id === accountId)?.currency ?? preferences.defaultCurrency;
   const format = formatters(currency, preferences.locale);
@@ -188,28 +204,41 @@ export function InvoiceEditor({
       return raised;
     }, "Invoice saved.");
 
-  const issue = () => {
+  const issue = async () => {
     if (!invoice) return;
     const due = dueDateFor(today(), invoice.paymentTermDays);
-    if (!confirmed(`Issue ${invoice.number}? It becomes a receivable due ${due}, and its lines are then fixed.`)) return;
+    const sure = await confirm({
+      title: `Issue ${invoice.number}?`,
+      message: `It becomes a receivable due ${due}, and its lines are then fixed — what is owed changes only by a credit from here on.`,
+      confirmLabel: "Issue invoice",
+      destructive: false,
+      always: true,
+    });
+    if (!sure) return;
     void run(() => api.issueInvoice(invoice.id), `${invoice.number} issued.`);
   };
 
-  const voidIt = () => {
+  const voidIt = async () => {
     if (!invoice) return;
-    if (!confirmed(`Void ${invoice.number}? It stays on the ledger as a void invoice — the number is not reused.`)) {
-      return;
-    }
+    const sure = await confirm({
+      title: `Void ${invoice.number}?`,
+      message: "It stays on the ledger as a void invoice and the number is never reused. This cannot be undone.",
+      confirmLabel: "Void invoice",
+      typeToConfirm: invoice.number,
+    });
+    if (!sure) return;
     void run(() => api.voidInvoice(invoice.id), `${invoice.number} voided.`);
   };
 
   const discard = async () => {
     if (!invoice) return;
-    if (!confirmed(`Delete this draft? Nothing has been issued, so there is nothing to keep.`)) return;
+    if (!(await confirm({ title: "Delete this draft?", message: "Nothing has been issued, so there is nothing to keep.", confirmLabel: "Delete draft" }))) {
+      return;
+    }
     try {
       await api.deleteInvoice(invoice.id);
       await onChanged(["Draft deleted."]);
-      onBack();
+      void back(true);
     } catch (failure) {
       onError(failure);
     }
@@ -299,7 +328,7 @@ export function InvoiceEditor({
         }
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={onBack}>
+            <Button variant="ghost" size="sm" onClick={() => void back()}>
               <ArrowLeft /> Receivables
             </Button>
 
@@ -326,7 +355,7 @@ export function InvoiceEditor({
             )}
             {draft && invoice && (
               <>
-                <Button variant="outline" size="sm" onClick={issue} disabled={busy}>
+                <Button variant="outline" size="sm" onClick={() => void issue()} disabled={busy}>
                   <Send /> Issue
                 </Button>
                 <Button variant="ghost" size="icon-sm" onClick={() => void discard()} aria-label="Delete this draft">
@@ -342,7 +371,7 @@ export function InvoiceEditor({
                 <Button variant="outline" size="sm" onClick={() => setLedgerForm("credit")} disabled={busy}>
                   <Scissors /> Credit
                 </Button>
-                <Button variant="ghost" size="sm" onClick={voidIt} disabled={busy}>
+                <Button variant="ghost" size="sm" onClick={() => void voidIt()} disabled={busy}>
                   <Ban /> Void
                 </Button>
               </>
@@ -612,8 +641,8 @@ export function InvoiceEditor({
                         variant="ghost"
                         size="icon-sm"
                         aria-label={`Remove the payment of ${format.money(payment.amount)}`}
-                        onClick={() => {
-                          if (!confirmed("Remove this payment? Use this only for one entered in error.")) return;
+                        onClick={async () => {
+                          if (!(await confirm({ title: "Remove this payment?", message: "Use this only for a payment entered in error. The balance goes back up by this amount.", confirmLabel: "Remove payment" }))) return;
                           void run(() => api.removePayment(invoice.id, payment.id), "Payment removed.");
                         }}
                       >
@@ -640,8 +669,8 @@ export function InvoiceEditor({
                         variant="ghost"
                         size="icon-sm"
                         aria-label={`Remove the credit of ${format.money(credit.amount)}`}
-                        onClick={() => {
-                          if (!confirmed("Remove this credit? Use this only for one entered in error.")) return;
+                        onClick={async () => {
+                          if (!(await confirm({ title: "Remove this credit?", message: "Use this only for a credit entered in error. The balance goes back up by this amount.", confirmLabel: "Remove credit" }))) return;
                           void run(() => api.removeCredit(invoice.id, credit.id), "Credit removed.");
                         }}
                       >
@@ -789,14 +818,17 @@ function PaymentPanel({
   const value = Number(amount);
   const over = value > outstanding;
 
+  const { dirty } = useDirty({ amount, receivedOn, method, reference, note });
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title="Record a payment"
       description={`${format.money(outstanding)} outstanding`}
-      onClose={onClose}
+      onClose={() => void close()}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button
@@ -881,14 +913,17 @@ function CreditPanel({
   const value = Number(amount);
   const tooBig = value > outstanding;
 
+  const { dirty } = useDirty({ amount, issuedOn, reason, note });
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title="Credit this invoice"
       description={`${format.money(outstanding)} outstanding`}
-      onClose={onClose}
+      onClose={() => void close()}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button

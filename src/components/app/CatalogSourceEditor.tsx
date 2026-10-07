@@ -27,6 +27,7 @@ import {
   type SyncField,
   type SyncPolicy,
 } from "@/lib/types";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   /** null when a source is being created. */
@@ -182,6 +183,9 @@ export function CatalogSourceEditor({ source, onSave, onClose }: Props) {
     { id: "permissions", label: "What it may change", count: draft.policy.fields.length },
   ];
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={source ? `Edit ${source.name}` : "New catalogue source"}
@@ -190,11 +194,12 @@ export function CatalogSourceEditor({ source, onSave, onClose }: Props) {
           ? source.url || "Fed by uploaded file"
           : "A supplier's price list, and the rules for what it may change in your catalogue."
       }
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       className="sm:max-w-3xl"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={saving || !draft.name || !draft.mapping.key}>
@@ -204,7 +209,6 @@ export function CatalogSourceEditor({ source, onSave, onClose }: Props) {
         </>
       }
     >
-      {error && <Notice kind="error" lines={[error]} className="mb-3" />}
 
       <div className="mb-4 flex flex-wrap gap-1">
         {tabs.map(entry => (

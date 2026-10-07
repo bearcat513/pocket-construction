@@ -58,9 +58,10 @@ describe("the receivables screen", () => {
       accounts={[account()]}
       templates={[]}
       preferences={DEFAULT_PREFERENCES}
+      openId={null}
+      onOpen={noop}
       onError={noop}
       onNotice={noop}
-      confirmed={() => true}
     />,
   );
 
@@ -102,7 +103,6 @@ describe("a new invoice", () => {
       onBack={noop}
       onChanged={asyncNoop}
       onError={noop}
-      confirmed={() => true}
     />,
   );
 

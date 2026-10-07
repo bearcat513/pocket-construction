@@ -392,6 +392,27 @@ describe("customers", () => {
     expect(await json(`/api/accounts/${meridianId}/quotes`)).toHaveLength(1);
   });
 
+  signedIn("GET /api/quotes/search finds past the first page and counts by status", async () => {
+    await post("/api/quotes", quoteBody({ name: "Needle in the haystack" }));
+    await post("/api/quotes", quoteBody({ name: "Some other job" }));
+    const all = await json("/api/quotes/search?perPage=1");
+    expect(all.items).toHaveLength(1);
+    expect(all.total).toBeGreaterThan(1);
+    expect(Object.values(all.counts).reduce((sum: number, n: any) => sum + n, 0)).toBe(all.total);
+
+    const found = await json("/api/quotes/search?q=haystack");
+    expect(found.items.map((quote: any) => quote.name)).toEqual(["Needle in the haystack"]);
+    expect(found.total).toBe(1);
+    expect(found.counts).toEqual({ draft: 1 });
+
+    const none = await json("/api/quotes/search?q=haystack&status=sent");
+    expect(none.items).toHaveLength(0);
+    expect(none.counts).toEqual({ draft: 1 });
+
+    // A stranger's search finds nothing of this account's.
+    expect((await json("/api/quotes/search?q=haystack", { cookie: bobCookie })).total).toBe(0);
+  });
+
   signedIn("somebody else's customer has no history to read", async () => {
     const response = await api(`/api/accounts/${meridianId}/quotes`, { cookie: bobCookie });
     expect(response.status).toBe(404);

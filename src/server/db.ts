@@ -18,7 +18,8 @@
  * field to allow them.
  */
 import { normalizePreferences } from "../lib/preferences";
-import { DEFAULT_SYNC_POLICY, EMPTY_ADDRESS, EMPTY_MAPPING, EMPTY_MATERIAL, emptyCustomer, primaryContact } from "../lib/types";
+import { DEFAULT_SYNC_POLICY, EMPTY_ADDRESS, EMPTY_MAPPING, EMPTY_MATERIAL, QUOTE_STATUSES, emptyCustomer, primaryContact } from "../lib/types";
+import { quoteFilter, quoteSort, type BoundFilter, type QuotePage, type QuoteSearch } from "../lib/quoteSearch";
 import { asUnit } from "../lib/units";
 import type {
   Account,
@@ -898,6 +899,50 @@ function quoteBody(input: QuoteRecordInput): Record_ {
 
 export const listQuotes = async (token: string, limit = 50): Promise<QuoteSummary[]> =>
   (await readMany(token, "quotes", { limit, sort: "-updated", fields: QUOTE_SUMMARY_FIELDS })).map(toQuoteSummary);
+
+/**
+ * One page of the estimates list, searched and filtered by PocketBase rather
+ * than the browser, with the total and the per-status counts beside it.
+ *
+ * The counts are one cheap `totalItems` read per status. They answer for the
+ * search as typed and ignore the status filter, which is what a row of filter
+ * chips needs: every chip says what clicking it would show.
+ */
+export async function searchQuotes(token: string, search: Required<QuoteSearch>, today = new Date()): Promise<QuotePage> {
+  const day = today.toISOString().slice(0, 10);
+  const pb = clientFor(token);
+  const records = pb.collection("quotes");
+  const bind = ({ expr, params }: BoundFilter) => (expr ? pb.filter(expr, params) : "");
+
+  try {
+    const [list, ...tallies] = await Promise.all([
+      records.getList(search.page, search.perPage, {
+        sort: quoteSort(search.sort, search.ascending),
+        fields: QUOTE_SUMMARY_FIELDS,
+        filter: bind(quoteFilter(search.q, search.status, day)),
+      }),
+      ...QUOTE_STATUSES.map(status =>
+        records.getList(1, 1, { fields: "id", filter: bind(quoteFilter(search.q, status, day)) }),
+      ),
+    ]);
+
+    const counts: QuotePage["counts"] = {};
+    QUOTE_STATUSES.forEach((status, index) => {
+      const count = tallies[index]!.totalItems;
+      if (count) counts[status] = count;
+    });
+
+    return {
+      items: list.items.map(toQuoteSummary),
+      page: list.page,
+      perPage: list.perPage,
+      total: list.totalItems,
+      counts,
+    };
+  } catch (error) {
+    throw toApiError(error, "Could not search quotes");
+  }
+}
 
 /**
  * Every quote written for one customer, newest first.

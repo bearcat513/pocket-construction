@@ -8,11 +8,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { FeedbackProvider } from "./components/app/feedback";
 
 const elem = document.getElementById("root")!;
 const app = (
   <StrictMode>
-    <App />
+    <FeedbackProvider>
+      <App />
+    </FeedbackProvider>
   </StrictMode>
 );
 

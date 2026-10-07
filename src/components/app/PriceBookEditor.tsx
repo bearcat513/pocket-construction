@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Field, Notice } from "./common";
 import { CURRENCIES, type PriceBook, type Product } from "@/lib/types";
 import type { PriceBookInput } from "@/lib/validate";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   book: PriceBook | null;
@@ -87,13 +88,17 @@ export function PriceBookEditor({ book, products, onSave, onClose }: Props) {
       ],
     });
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={book ? `Edit ${book.name}` : "New price book"}
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -232,7 +237,6 @@ export function PriceBookEditor({ book, products, onSave, onClose }: Props) {
         </div>
       </div>
 
-      <Notice kind="error" lines={error ? [error] : []} className="mt-3" />
     </Sheet>
   );
 

@@ -24,6 +24,7 @@ import { SYNC_ACTIONS } from "../lib/catalogSync";
 import { CATALOG_CSV_COLUMNS } from "../lib/catalogCsv";
 import { CATALOG_TEMPLATES } from "../lib/catalogTemplates";
 import { AGING_BUCKETS } from "../lib/receivable";
+import { QUOTE_PAGE_MAX, QUOTE_SORTS } from "../lib/quoteSearch";
 import {
   ACCOUNT_STATUSES,
   APPROVAL_METRICS,
@@ -1086,6 +1087,31 @@ export const OPERATIONS: Operation[] = [
       "what the caller claimed.",
     requestBody: jsonBody("The quote header and its lines.", ref("QuoteInput")),
     responses: { "201": jsonResponse("The quote, priced and stored.", ref("SavedQuote")) },
+  },
+  {
+    method: "get",
+    path: "/api/quotes/search",
+    tag: "Quotes",
+    operationId: "searchQuotes",
+    summary: "Search quotes, a page at a time",
+    description:
+      "What the estimates screen reads. `q` matches the name, the number and the customer's name; " +
+      "`status` narrows to one status, with `expired` meaning a sent quote whose date has passed, " +
+      "the same way a single quote reports it. `counts` answers for the search alone, per status, " +
+      "so a filter can say what it would show before it is picked.",
+    parameters: [
+      queryParam("q", "Text to find in the name, the number or the customer's name.", { type: "string" }),
+      queryParam("status", "One status, or `all`.", { type: "string", enum: ["all", ...QUOTE_STATUSES] }),
+      queryParam("sort", "The column to sort on.", { type: "string", enum: [...QUOTE_SORTS] }),
+      queryParam("dir", "`asc` or `desc`. Newest first by default.", { type: "string", enum: ["asc", "desc"] }),
+      queryParam("page", "Which page, from 1.", { type: "integer", minimum: 1 }),
+      queryParam("perPage", `How many per page, at most ${QUOTE_PAGE_MAX}.`, {
+        type: "integer",
+        minimum: 1,
+        maximum: QUOTE_PAGE_MAX,
+      }),
+    ],
+    responses: { "200": jsonResponse("One page of matches, with the totals.", ref("QuotePage")) },
   },
   {
     method: "get",
@@ -2801,6 +2827,21 @@ function schemas(): Record<string, Json> {
       "A quote without its lines or its approval requests — what the list endpoints return. Every " +
         "other field is the quote's own.",
       { ...quoteHeader, lineCount: integer_("How many lines it has."), pendingApprovals: integer_("How many approvals it is still waiting on.") },
+    ),
+    QuotePage: object(
+      "One page of a quote search.",
+      {
+        items: array(ref("QuoteSummary")),
+        page: integer_("This page, from 1."),
+        perPage: integer_("The page size."),
+        total: integer_("How many match the search and the status, across every page."),
+        counts: {
+          type: "object",
+          description: "How many match the search alone, per status. A status with none is left out.",
+          additionalProperties: { type: "integer" },
+        },
+      },
+      ["items", "page", "perPage", "total", "counts"],
     ),
     SavedQuote: object("A stored quote, with whatever the engine wants to say about it.", {
       quote: ref("Quote"),

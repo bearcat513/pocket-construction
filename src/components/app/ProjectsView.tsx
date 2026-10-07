@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
-import { EmptyState, InvoiceStatusBadge, Section, StatusBadge, formatters } from "./common";
+import { EmptyState, InvoiceStatusBadge, RowLink, Section, StatusBadge, formatters } from "./common";
+import { routePath } from "@/lib/route";
 import { ProjectEditor } from "./ProjectEditor";
 import { api, type DirectoryUser, type ProjectSummary, type Shareable } from "@/lib/api";
 import type { Preferences } from "@/lib/preferences";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/types";
 import type { ProjectInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
+import { useFeedback } from "./feedback";
 
 type Props = {
   projects: Project[];
@@ -28,11 +30,13 @@ type Props = {
   directory: DirectoryUser[];
   preferences: Preferences;
   myId: string;
+  /** The project open on screen, from the URL; null for the list. */
+  openId: string | null;
+  onOpen: (id: string | null) => void;
   onChanged: () => Promise<void>;
   onOpenQuote: (id: string) => void;
   onShare: (kind: Shareable, id: string, title: string) => void;
   onError: (error: unknown) => void;
-  confirmed: (message: string) => boolean;
 };
 
 const STATUS_TONE: Record<ProjectStatus, "neutral" | "info" | "pending" | "success" | "danger"> = {
@@ -56,10 +60,12 @@ function ProjectStatusBadge({ status }: { status: ProjectStatus }) {
  * screen that tried would be a worse version of both.
  */
 export function ProjectsView(props: Props) {
-  const { projects, accounts, directory, preferences, myId } = props;
+  const { accounts, directory, preferences, myId, openId } = props;
+  const { pending, removeWithUndo } = useFeedback();
+  const projects = useMemo(() => props.projects.filter(project => !pending.has(project.id)), [props.projects, pending]);
 
   const [editing, setEditing] = useState<Project | null | undefined>(undefined);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const setOpenId = props.onOpen;
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ProjectStatus | "">("");
@@ -79,21 +85,14 @@ export function ProjectsView(props: Props) {
     setEditing(undefined);
   };
 
-  const remove = async (project: Project) => {
-    if (
-      !props.confirmed(
-        `Delete ${project.number} — ${project.name}? The estimates and invoices written against it are kept.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      await api.deleteProject(project.id);
-      await props.onChanged();
-    } catch (error) {
-      props.onError(error);
-    }
-  };
+  /** Gone from the list at once, deleted when the undo window closes. */
+  const remove = (project: Project) =>
+    removeWithUndo({
+      id: project.id,
+      label: `Deleted ${project.number} — ${project.name}. Its estimates and invoices are kept.`,
+      remove: () => api.deleteProject(project.id),
+      done: props.onChanged,
+    });
 
   if (openId) {
     return (
@@ -202,7 +201,9 @@ export function ProjectsView(props: Props) {
                         <Td>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <HardHat className="size-3.5 shrink-0 text-muted-foreground" />
-                            <span className="font-medium">{project.name}</span>
+                            <RowLink href={routePath({ view: "projects", id: project.id })} onOpen={() => setOpenId(project.id)}>
+                              {project.name}
+                            </RowLink>
                             <span className="font-mono text-xs text-muted-foreground">{project.number}</span>
                             {!mine && <Badge tone="info">shared with you</Badge>}
                           </div>

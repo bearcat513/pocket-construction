@@ -6,6 +6,7 @@
  * token handling anywhere in here.
  */
 import type { Preferences } from "./preferences";
+import { quoteSearchQuery, type QuotePage, type QuoteSearch } from "./quoteSearch";
 import type { AgingReport } from "./receivable";
 import type { ProjectStats } from "./projects";
 import type { SyncPlan } from "./catalogSync";
@@ -396,6 +397,7 @@ export const api = {
   /* --------------------------------- quotes ------------------------------ */
 
   listQuotes: (limit?: number) => request<QuoteSummary[]>(`/api/quotes${limit === undefined ? "" : `?limit=${limit}`}`),
+  searchQuotes: (search: QuoteSearch) => request<QuotePage>(`/api/quotes/search${quoteSearchQuery(search)}`),
   quotesAwaitingMe: () => request<QuoteSummary[]>("/api/quotes/awaiting"),
   getQuote: (id: string) => request<Quote>(`/api/quotes/${id}`),
   createQuote: (payload: QuoteBody) => send<SavedQuote>("/api/quotes", "POST", payload),

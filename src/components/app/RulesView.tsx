@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Mail, Pencil, Plus, ShieldAlert, Trash2, Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
   type Product,
 } from "@/lib/types";
 import type { ApprovalRuleInput, PricingRuleInput } from "@/lib/validate";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   pricingRules: PricingRule[];
@@ -33,7 +34,6 @@ type Props = {
   directory: DirectoryUser[];
   onChanged: () => Promise<void>;
   onError: (error: unknown) => void;
-  confirmed: (message: string) => boolean;
 };
 
 /**
@@ -44,20 +44,24 @@ type Props = {
  * editors are deliberately similar — a rule that adjusts a price and a rule
  * that flags one are the same kind of thinking.
  */
-export function RulesView({ pricingRules, approvalRules, products, directory, onChanged, onError, confirmed }: Props) {
+export function RulesView({ products, directory, onChanged, ...props }: Props) {
+  const { pending, removeWithUndo } = useFeedback();
+  const pricingRules = useMemo(() => props.pricingRules.filter(rule => !pending.has(rule.id)), [props.pricingRules, pending]);
+  const approvalRules = useMemo(
+    () => props.approvalRules.filter(rule => !pending.has(rule.id)),
+    [props.approvalRules, pending],
+  );
   const [editingPricing, setEditingPricing] = useState<PricingRule | null | undefined>(undefined);
   const [editingApproval, setEditingApproval] = useState<ApprovalRule | null | undefined>(undefined);
 
-  const remove = async (what: "pricing" | "approval", id: string, name: string) => {
-    if (!confirmed(`Delete the rule “${name}”?`)) return;
-    try {
-      if (what === "pricing") await api.deletePricingRule(id);
-      else await api.deleteApprovalRule(id);
-      await onChanged();
-    } catch (error) {
-      onError(error);
-    }
-  };
+  /** Gone from the list at once, deleted when the undo window closes. */
+  const remove = (what: "pricing" | "approval", id: string, name: string) =>
+    removeWithUndo({
+      id,
+      label: `Deleted the rule “${name}”.`,
+      remove: () => (what === "pricing" ? api.deletePricingRule(id) : api.deleteApprovalRule(id)),
+      done: onChanged,
+    });
 
   return (
     <div className="space-y-4">
@@ -370,13 +374,17 @@ function PricingRuleEditor({
     }
   };
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={rule ? `Edit ${rule.name}` : "New pricing rule"}
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -497,7 +505,6 @@ function PricingRuleEditor({
         </Field>
       </div>
 
-      <Notice kind="error" lines={error ? [error] : []} className="mt-3" />
     </Sheet>
   );
 }
@@ -562,13 +569,17 @@ function ApprovalRuleEditor({
     }
   };
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={rule ? `Edit ${rule.name}` : "New approval rule"}
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -679,7 +690,6 @@ function ApprovalRuleEditor({
         </Field>
       </div>
 
-      <Notice kind="error" lines={error ? [error] : []} className="mt-3" />
     </Sheet>
   );
 }

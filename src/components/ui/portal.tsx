@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 /**
  * Lifts an overlay out of the view that opened it and onto `<body>`.
@@ -23,4 +23,38 @@ import type { ReactNode } from "react";
 export function Portal({ children }: { children: ReactNode }) {
   if (typeof document === "undefined") return <>{children}</>;
   return createPortal(children, document.body);
+}
+
+/* ------------------------------ escape layers ----------------------------- */
+
+/**
+ * Overlays stack — a confirmation over a panel, a panel over the page — and
+ * Escape belongs to the one on top. Each overlay pushes its handler while it
+ * is mounted, and one document listener calls only the last one pushed, so
+ * dismissing "Discard changes?" never also closes the panel it was asked from.
+ */
+const escapeLayers: { current: () => void }[] = [];
+
+function onEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  const top = escapeLayers[escapeLayers.length - 1];
+  if (!top) return;
+  event.preventDefault();
+  top.current();
+}
+
+export function useEscapeLayer(handler: () => void) {
+  const layer = useRef(handler);
+  layer.current = handler;
+
+  useEffect(() => {
+    const entry = layer;
+    if (escapeLayers.length === 0) document.addEventListener("keydown", onEscape);
+    escapeLayers.push(entry);
+    return () => {
+      const index = escapeLayers.lastIndexOf(entry);
+      if (index >= 0) escapeLayers.splice(index, 1);
+      if (escapeLayers.length === 0) document.removeEventListener("keydown", onEscape);
+    };
+  }, []);
 }

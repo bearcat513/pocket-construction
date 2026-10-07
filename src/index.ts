@@ -44,6 +44,7 @@ import {
   updateProject,
   listProposalTemplates,
   listQuotes,
+  searchQuotes,
   listCredits,
   listInvoices,
   listInvoicesForAccount,
@@ -71,6 +72,7 @@ import {
   quoteRows,
 } from "./server/export";
 import { ApiError, asRecord, fail, formatParam, handler, intParam, query, readJson } from "./server/http";
+import { readQuoteSearch } from "./lib/quoteSearch";
 import { readPreferences, writePreferences } from "./server/preferences";
 import {
   createPricedQuote,
@@ -1156,6 +1158,18 @@ const server = serve({
         const preferences = await readPreferences(token);
         const result = await createPricedQuote(token, header, lines, preferences.quoteValidDays);
         return Response.json(result, { status: 201 });
+      }),
+    },
+
+    /**
+     * The estimates list: searched, filtered and paged by PocketBase, with the
+     * total and the per-status counts, so nothing past the first page is
+     * unfindable.
+     */
+    "/api/quotes/search": {
+      GET: guarded(async (token, req) => {
+        const page = await searchQuotes(token, readQuoteSearch(query(req)));
+        return Response.json({ ...page, items: page.items.map(quote => withExpiry(quote)) });
       }),
     },
 

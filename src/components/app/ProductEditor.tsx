@@ -30,6 +30,7 @@ import {
   type VolumeTier,
 } from "@/lib/types";
 import { orderQuantityFor } from "@/lib/units";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   /** null when a product is being created. */
@@ -197,16 +198,20 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
     { id: "bundle", label: "Assembly", count: draft.components.length },
   ];
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={product ? `Edit ${product.name}` : "New catalogue item"}
       description={
         product ? product.sku : "A SKU identifies this item everywhere — in assemblies, price books and files."
       }
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -999,7 +1004,6 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
         )}
       </div>
 
-      <Notice kind="error" lines={error ? [error] : []} className="mt-3" />
     </Sheet>
   );
 

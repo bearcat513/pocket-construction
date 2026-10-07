@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AccountStatusBadge, EmptyState, Field, Notice, Section } from "./common";
+import { AccountStatusBadge, EmptyState, Field, Notice, RowLink, Section } from "./common";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
+import { routePath } from "@/lib/route";
 import { CustomerDetail } from "./CustomerDetail";
 import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
 import { api } from "@/lib/api";
@@ -40,7 +42,9 @@ type Props = {
   onOpenQuote: (id: string) => void;
   /** Switches to the receivables screen, where an invoice can be acted on. */
   onOpenReceivables: () => void;
-  confirmed: (message: string) => boolean;
+  /** The client open on screen, from the URL; null for the list. */
+  openId: string | null;
+  onOpen: (id: string | null) => void;
 };
 
 /**
@@ -57,17 +61,19 @@ type Props = {
  * thing you read rather than a row you edit in place.
  */
 export function AccountsView({
-  accounts,
+  accounts: allAccounts,
   priceBooks,
   preferences,
   onChanged,
   onError,
   onOpenQuote,
   onOpenReceivables,
-  confirmed,
+  openId,
+  onOpen: setOpenId,
 }: Props) {
+  const { pending, removeWithUndo } = useFeedback();
+  const accounts = useMemo(() => allAccounts.filter(account => !pending.has(account.id)), [allAccounts, pending]);
   const [editing, setEditing] = useState<Account | null | undefined>(undefined);
-  const [openId, setOpenId] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<AccountStatus | "">("");
@@ -86,15 +92,15 @@ export function AccountsView({
     [accounts, search, status, tag, sort],
   );
 
-  const remove = async (account: Account) => {
-    if (!confirmed(`Delete ${account.name}? Quotes already written for them are kept.`)) return;
-    try {
-      await api.deleteAccount(account.id);
-      if (openId === account.id) setOpenId(null);
-      await onChanged();
-    } catch (error) {
-      onError(error);
-    }
+  /** Gone from the list at once, deleted when the undo window closes. */
+  const remove = (account: Account) => {
+    if (openId === account.id) setOpenId(null);
+    removeWithUndo({
+      id: account.id,
+      label: `Deleted ${account.name}. Estimates already written for them are kept.`,
+      remove: () => api.deleteAccount(account.id),
+      done: onChanged,
+    });
   };
 
   const editor = editing !== undefined && (
@@ -213,7 +219,7 @@ export function AccountsView({
           <Table>
             <Thead>
               <Tr>
-                <Th>Customer</Th>
+                <Th>Client</Th>
                 <Th>Primary contact</Th>
                 <Th>Terms</Th>
                 <Th numeric>Tax</Th>
@@ -223,17 +229,13 @@ export function AccountsView({
             </Thead>
             <Tbody>
               {visible.map(account => (
-                <Tr
-                  key={account.id}
-                  onClick={() => setOpenId(account.id)}
-                  className="cursor-pointer"
-                  tabIndex={0}
-                  onKeyDown={event => event.key === "Enter" && setOpenId(account.id)}
-                >
+                <Tr key={account.id} onClick={() => setOpenId(account.id)} className="cursor-pointer">
                   <Td>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="font-medium">{account.name}</span>
+                      <RowLink href={routePath({ view: "customers", id: account.id })} onOpen={() => setOpenId(account.id)}>
+                        {account.name}
+                      </RowLink>
                       <AccountStatusBadge status={account.status} />
                       <Badge tone="outline">{account.currency}</Badge>
                       {account.taxExempt && <Badge tone="info">tax exempt</Badge>}
@@ -285,7 +287,7 @@ export function AccountsView({
                         size="icon-sm"
                         onClick={event => {
                           event.stopPropagation();
-                          void remove(account);
+                          remove(account);
                         }}
                         aria-label={`Delete ${account.name}`}
                       >
@@ -414,13 +416,17 @@ function AccountEditor({
     }
   };
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={account ? `Edit ${account.name}` : "New customer"}
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -657,7 +663,6 @@ function AccountEditor({
         </Field>
       </div>
 
-      <Notice kind="error" lines={error ? [error] : []} className="mt-3" />
     </Sheet>
   );
 }

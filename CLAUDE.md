@@ -406,6 +406,20 @@ the browser cannot reach PocketBase; the seed photos live in `docker/pb_migratio
 site's palette and webfonts are scoped under `.site` in `styles/globals.css` so neither theme leaks
 into the other.
 
+**Where you are is the URL.** `src/lib/route.ts` maps screens to paths (`/estimates/:id`,
+`/clients/:id`, `/receivables/:id`, `/settings/:tab`), using the on-screen words; `App.tsx` reads
+the path and `navigate()` pushes it, so Back, refresh and links work. Screens take `openId`/`onOpen`
+rather than keeping their own selection state, and a record's name in a list is a `RowLink` (a
+real `<a>`), never only a clickable `<tr>`.
+
+**Feedback goes through `components/app/feedback.tsx`.** `useFeedback()` gives `toast`, `confirm`
+(the in-app dialog — never `window.confirm`; `typeToConfirm` for the irreversible few) and
+`removeWithUndo`, which hides a record at once and deletes it when the undo toast expires. Lists
+filter out `pending` ids. A form with a draft calls `useUnsavedChanges(dirty, onClose)` and closes
+through what it returns, so the nav, Back, Escape and closing the tab all ask before discarding.
+Escape belongs to the topmost overlay (`useEscapeLayer`). The estimates list is searched and paged
+by the server (`GET /api/quotes/search`, `src/lib/quoteSearch.ts`), never filtered in the browser.
+
 Anything that persists lives in the account's preferences (`src/lib/preferences.ts`); nothing in
 the UI writes to `localStorage`.
 

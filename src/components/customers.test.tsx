@@ -88,11 +88,12 @@ const list = (accounts: Account[]) =>
       accounts={accounts}
       priceBooks={[priceBook()]}
       preferences={DEFAULT_PREFERENCES}
+      openId={null}
+      onOpen={noop}
       onChanged={asyncNoop}
       onError={noop}
       onOpenQuote={noop}
       onOpenReceivables={noop}
-      confirmed={() => true}
     />,
   );
 

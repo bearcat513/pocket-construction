@@ -23,13 +23,13 @@ import {
 } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import { EmptyState, Field, Notice, Section } from "./common";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Tab = "layout" | "texts" | "images" | "requests";
 
 type Props = {
   onError: (error: unknown) => void;
   onNotice: (lines: string[]) => void;
-  confirmed: (message: string) => boolean;
 };
 
 /** The ids in one slot, in order. */
@@ -65,7 +65,8 @@ function usage(content: SiteContent): Map<string, string[]> {
  * Only an account with `siteEditor` is shown this, and PocketBase refuses
  * anyone else's writes regardless.
  */
-export function WebsiteView({ onError, onNotice, confirmed }: Props) {
+export function WebsiteView({ onError, onNotice }: Props) {
+  const { confirm } = useFeedback();
   const [tab, setTab] = useState<Tab>("layout");
   const [content, setContent] = useState<SiteContent | null>(null);
   const [requests, setRequests] = useState<ContactRequest[]>([]);
@@ -97,7 +98,7 @@ export function WebsiteView({ onError, onNotice, confirmed }: Props) {
   async function removeText(text: SiteText) {
     const where = used.get(text.id);
     const warning = where?.length ? ` It is on the page in: ${where.join(", ")}.` : "";
-    if (!confirmed(`Delete “${text.name}”?${warning}`)) return;
+    if (!(await confirm({ title: `Delete “${text.name}”?`, message: `This text is removed from the website.${warning}` }))) return;
     try {
       await api.deleteSiteText(text.id);
       await load();
@@ -109,7 +110,7 @@ export function WebsiteView({ onError, onNotice, confirmed }: Props) {
   async function removeImage(image: SiteImage) {
     const where = used.get(image.id);
     const warning = where?.length ? ` It is on the page in: ${where.join(", ")}.` : "";
-    if (!confirmed(`Delete “${image.name}”?${warning}`)) return;
+    if (!(await confirm({ title: `Delete “${image.name}”?`, message: `This picture is removed from the website.${warning}` }))) return;
     try {
       await api.deleteSiteImage(image.id);
       await load();
@@ -128,7 +129,7 @@ export function WebsiteView({ onError, onNotice, confirmed }: Props) {
   }
 
   async function removeRequest(request: ContactRequest) {
-    if (!confirmed(`Delete the enquiry from ${request.firstName} ${request.lastName}?`)) return;
+    if (!(await confirm(`Delete the enquiry from ${request.firstName} ${request.lastName}? It cannot be recovered.`))) return;
     try {
       await api.deleteContactRequest(request.id);
       setRequests(list => list.filter(entry => entry.id !== request.id));
@@ -440,14 +441,17 @@ export function SlotEditor({
     }
   }
 
+  const { dirty } = useDirty(ids);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={`${slot.section} · ${slot.label}`}
       description={slot.hint}
-      onClose={onClose}
+      onClose={() => void close()}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -562,14 +566,17 @@ export function SiteTextEditor({
     }
   }
 
+  const { dirty } = useDirty({ name, title, body, items });
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={text ? `Edit “${text.name}”` : "New text"}
       description="What each part means depends on the slot it is placed in."
-      onClose={onClose}
+      onClose={() => void close()}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>
@@ -644,13 +651,16 @@ export function SiteImageEditor({
     }
   }
 
+  const { dirty } = useDirty({ name, alt, file: file?.name });
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={image ? `Edit “${image.name}”` : "Upload an image"}
-      onClose={onClose}
+      onClose={() => void close()}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={busy}>

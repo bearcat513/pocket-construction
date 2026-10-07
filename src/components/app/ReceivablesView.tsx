@@ -4,8 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
-import { EmptyState, InvoiceStatusBadge, Notice, Section, formatters } from "./common";
+import { SortTh, Table, Tbody, Td, Th, Thead, Tr, sortRows, useSort } from "@/components/ui/table";
+import { EmptyState, InvoiceStatusBadge, Notice, RowLink, Section, formatters } from "./common";
+import { routePath } from "@/lib/route";
+
+type InvoiceSort = "number" | "client" | "status" | "due" | "total" | "balance";
 import { InvoiceEditor } from "./InvoiceEditor";
 import { api } from "@/lib/api";
 import {
@@ -36,7 +39,9 @@ type Props = {
   preferences: Preferences;
   onError: (error: unknown) => void;
   onNotice: (lines: string[]) => void;
-  confirmed: (message: string) => boolean;
+  /** The invoice open on screen, from the URL; null for the list. */
+  openId: string | null;
+  onOpen: (id: string | null) => void;
 };
 
 /**
@@ -53,9 +58,9 @@ type Props = {
  * summed them would be a confident wrong number. The selector is how you look
  * at the other one, and the count of what was left out is on the page.
  */
-export function ReceivablesView({ accounts, templates, preferences, onError, onNotice, confirmed }: Props) {
+export function ReceivablesView({ accounts, templates, preferences, onError, onNotice, openId, onOpen: setOpenId }: Props) {
   const [invoices, setInvoices] = useState<InvoiceSummary[] | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const { sort, onSort } = useSort<InvoiceSort>("due", true, key => key === "number" || key === "client" || key === "due");
   const [creating, setCreating] = useState(false);
 
   const [search, setSearch] = useState("");
@@ -110,6 +115,28 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
     });
   }, [invoices, search, status, bucket, asOf]);
 
+  const sorted = useMemo(
+    () =>
+      sortRows(visible, sort, (invoice, key) => {
+        switch (key) {
+          case "number":
+            return invoice.number;
+          case "client":
+            return invoice.customer.name;
+          case "status":
+            return invoiceStatus(invoice, asOf);
+          case "due":
+            // A draft has no due date yet; it sorts after everything that does.
+            return invoice.dueDate || "9999-12-31";
+          case "total":
+            return invoice.totals.total;
+          case "balance":
+            return invoice.totals.balance;
+        }
+      }),
+    [visible, sort, asOf],
+  );
+
   const afterChange = async (lines: string[]) => {
     await load();
     if (lines.length) onNotice(lines);
@@ -130,7 +157,6 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
         onBack={() => setOpenId(null)}
         onChanged={afterChange}
         onError={onError}
-        confirmed={confirmed}
       />
     );
   }
@@ -149,7 +175,6 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
           setOpenId(raised.id);
         }}
         onError={onError}
-        confirmed={confirmed}
       />
     );
   }
@@ -312,30 +337,42 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
           <Table>
             <Thead>
               <Tr>
-                <Th>Invoice</Th>
-                <Th>Customer</Th>
-                <Th>Status</Th>
-                <Th>Due</Th>
-                <Th numeric>Total</Th>
-                <Th numeric>Balance</Th>
+                <SortTh column="number" sort={sort} onSort={onSort}>
+                  Invoice
+                </SortTh>
+                <SortTh column="client" sort={sort} onSort={onSort}>
+                  Client
+                </SortTh>
+                <SortTh column="status" sort={sort} onSort={onSort}>
+                  Status
+                </SortTh>
+                <SortTh column="due" sort={sort} onSort={onSort}>
+                  Due
+                </SortTh>
+                <SortTh column="total" sort={sort} onSort={onSort} numeric>
+                  Total
+                </SortTh>
+                <SortTh column="balance" sort={sort} onSort={onSort} numeric>
+                  Balance
+                </SortTh>
               </Tr>
             </Thead>
             <Tbody>
-              {visible.map(invoice => {
+              {sorted.map(invoice => {
                 const row = formatters(invoice.currency, preferences.locale);
                 const late = daysOverdue(invoice, asOf);
                 const condition = invoiceStatus(invoice, asOf);
 
                 return (
-                  <Tr
-                    key={invoice.id}
-                    onClick={() => setOpenId(invoice.id)}
-                    className="cursor-pointer"
-                    tabIndex={0}
-                    onKeyDown={event => event.key === "Enter" && setOpenId(invoice.id)}
-                  >
+                  <Tr key={invoice.id} onClick={() => setOpenId(invoice.id)} className="cursor-pointer">
                     <Td>
-                      <span className="block font-mono text-xs font-medium">{invoice.number}</span>
+                      <RowLink
+                        href={routePath({ view: "receivables", id: invoice.id })}
+                        onOpen={() => setOpenId(invoice.id)}
+                        className="block font-mono text-xs"
+                      >
+                        {invoice.number}
+                      </RowLink>
                       {invoice.quoteNumber && (
                         <span className="text-xs text-muted-foreground">from {invoice.quoteNumber}</span>
                       )}

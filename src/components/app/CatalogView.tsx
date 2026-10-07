@@ -17,8 +17,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
+import { SortTh, Table, Tbody, Td, Th, Thead, Tr, sortRows, useSort } from "@/components/ui/table";
 import { EmptyState, Section, formatters } from "./common";
+import { useFeedback } from "./feedback";
 import { CatalogSourceEditor } from "./CatalogSourceEditor";
 import { CatalogTemplatesDialog } from "./CatalogTemplatesDialog";
 import { PriceBookEditor } from "./PriceBookEditor";
@@ -50,8 +51,28 @@ type Props = {
   onShare: (kind: Shareable, id: string, title: string) => void;
   onError: (error: unknown) => void;
   onNotice: (lines: string[]) => void;
-  confirmed: (message: string) => boolean;
 };
+
+type MaterialSort = "name" | "division" | "costType" | "listPrice" | "margin";
+
+const marginOf = (product: Product) =>
+  product.listPrice ? ((product.listPrice - product.cost) / product.listPrice) * 100 : 0;
+
+/** What each sortable column sorts by. */
+function materialValue(product: Product, key: MaterialSort): string | number {
+  switch (key) {
+    case "name":
+      return product.name;
+    case "division":
+      return product.material.division || product.family;
+    case "costType":
+      return COST_TYPE_LABELS[product.costType];
+    case "listPrice":
+      return product.listPrice;
+    case "margin":
+      return marginOf(product);
+  }
+}
 
 /**
  * The catalogue: what a job is built out of, what it costs, and where those
@@ -62,7 +83,16 @@ type Props = {
  * a supplier feed is how both of them stop being a year out of date.
  */
 export function CatalogView(props: Props) {
-  const { products, priceBooks, catalogSources, preferences, myId } = props;
+  const { preferences, myId } = props;
+  const { pending, removeWithUndo } = useFeedback();
+  // Anything waiting out its undo window is already gone as far as the screen is concerned.
+  const products = useMemo(() => props.products.filter(entry => !pending.has(entry.id)), [props.products, pending]);
+  const priceBooks = useMemo(() => props.priceBooks.filter(entry => !pending.has(entry.id)), [props.priceBooks, pending]);
+  const catalogSources = useMemo(
+    () => props.catalogSources.filter(entry => !pending.has(entry.id)),
+    [props.catalogSources, pending],
+  );
+  const { sort, onSort } = useSort<MaterialSort>("name", true, key => key === "name" || key === "division" || key === "costType");
   const [editingProduct, setEditingProduct] = useState<Product | null | undefined>(undefined);
   const [editingBook, setEditingBook] = useState<PriceBook | null | undefined>(undefined);
   const [editingSource, setEditingSource] = useState<CatalogSource | null | undefined>(undefined);
@@ -83,7 +113,7 @@ export function CatalogView(props: Props) {
 
   const visible = useMemo(() => {
     const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
-    return products.filter(product => {
+    const matching = products.filter(product => {
       if (costType !== "all" && product.costType !== costType) return false;
       if (!terms.length) return true;
       const haystack = [
@@ -102,7 +132,8 @@ export function CatalogView(props: Props) {
         .toLowerCase();
       return terms.every(term => haystack.includes(term));
     });
-  }, [products, search, costType]);
+    return sortRows(matching, sort, materialValue);
+  }, [products, search, costType, sort]);
 
   const saveSource = async (input: CatalogSourceInput) => {
     if (editingSource) await api.updateCatalogSource(editingSource.id, input);
@@ -111,15 +142,13 @@ export function CatalogView(props: Props) {
     setEditingSource(undefined);
   };
 
-  const removeSource = async (source: CatalogSource) => {
-    if (!props.confirmed(`Delete the source “${source.name}”? The items it has synced stay exactly as they are.`)) return;
-    try {
-      await api.deleteCatalogSource(source.id);
-      await props.onChanged();
-    } catch (error) {
-      props.onError(error);
-    }
-  };
+  const removeSource = (source: CatalogSource) =>
+    removeWithUndo({
+      id: source.id,
+      label: `Deleted the source “${source.name}”. The items it synced stay as they are.`,
+      remove: () => api.deleteCatalogSource(source.id),
+      done: props.onChanged,
+    });
 
   /** Previews a source, from its URL or from a file somebody dropped on it. */
   const preview = async (source: CatalogSource, body?: string) => {
@@ -163,25 +192,21 @@ export function CatalogView(props: Props) {
     setEditingBook(undefined);
   };
 
-  const removeProduct = async (product: Product) => {
-    if (!props.confirmed(`Delete ${product.sku}? Quotes that already use it keep the price they were given.`)) return;
-    try {
-      await api.deleteProduct(product.id);
-      await props.onChanged();
-    } catch (error) {
-      props.onError(error);
-    }
-  };
+  const removeProduct = (product: Product) =>
+    removeWithUndo({
+      id: product.id,
+      label: `Deleted ${product.sku}. Estimates that use it keep the price they were given.`,
+      remove: () => api.deleteProduct(product.id),
+      done: props.onChanged,
+    });
 
-  const removeBook = async (book: PriceBook) => {
-    if (!props.confirmed(`Delete the price book “${book.name}”?`)) return;
-    try {
-      await api.deletePriceBook(book.id);
-      await props.onChanged();
-    } catch (error) {
-      props.onError(error);
-    }
-  };
+  const removeBook = (book: PriceBook) =>
+    removeWithUndo({
+      id: book.id,
+      label: `Deleted the price book “${book.name}”.`,
+      remove: () => api.deletePriceBook(book.id),
+      done: props.onChanged,
+    });
 
   /** Importing a `*.catalog.json` file or a spreadsheet: read it here, validate on the server. */
   const importFile = async (file: File) => {
@@ -286,11 +311,21 @@ export function CatalogView(props: Props) {
           <Table>
             <Thead>
               <Tr>
-                <Th>Item</Th>
-                <Th>Division</Th>
-                <Th>Cost type</Th>
-                <Th numeric>List</Th>
-                <Th numeric>Margin</Th>
+                <SortTh column="name" sort={sort} onSort={onSort}>
+                  Item
+                </SortTh>
+                <SortTh column="division" sort={sort} onSort={onSort}>
+                  Division
+                </SortTh>
+                <SortTh column="costType" sort={sort} onSort={onSort}>
+                  Cost type
+                </SortTh>
+                <SortTh column="listPrice" sort={sort} onSort={onSort} numeric>
+                  List
+                </SortTh>
+                <SortTh column="margin" sort={sort} onSort={onSort} numeric>
+                  Margin
+                </SortTh>
                 <Th>Ordering</Th>
                 <Th className="w-28" aria-label="Actions" />
               </Tr>
@@ -298,7 +333,7 @@ export function CatalogView(props: Props) {
             <Tbody>
               {visible.map(product => {
                 const mine = product.ownerId === myId;
-                const margin = product.listPrice ? ((product.listPrice - product.cost) / product.listPrice) * 100 : 0;
+                const margin = marginOf(product);
 
                 return (
                   <Tr key={product.id} className={product.active ? undefined : "opacity-60"}>

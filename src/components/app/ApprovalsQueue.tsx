@@ -1,7 +1,8 @@
 import { ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
-import { EmptyState, Section, StatusBadge, formatters } from "./common";
+import { EmptyState, Section, StatusBadge, formatters, RowLink } from "./common";
+import { routePath } from "@/lib/route";
 import type { Preferences } from "@/lib/preferences";
 import type { QuoteSummary } from "@/lib/types";
 
@@ -49,15 +50,11 @@ export function ApprovalsQueue({ quotes, preferences, onOpen }: Props) {
             {quotes.map(quote => {
               const format = formatters(quote.currency, preferences.locale);
               return (
-                <Tr
-                  key={quote.id}
-                  onClick={() => onOpen(quote.id)}
-                  className="cursor-pointer"
-                  tabIndex={0}
-                  onKeyDown={event => event.key === "Enter" && onOpen(quote.id)}
-                >
+                <Tr key={quote.id} onClick={() => onOpen(quote.id)} className="cursor-pointer">
                   <Td>
-                    <span className="block font-medium">{quote.name}</span>
+                    <RowLink href={routePath({ view: "quotes", id: quote.id })} onOpen={() => onOpen(quote.id)} className="block">
+                      {quote.name}
+                    </RowLink>
                     <span className="font-mono text-xs text-muted-foreground">{quote.number}</span>
                   </Td>
                   <Td>{quote.customer.name || "—"}</Td>

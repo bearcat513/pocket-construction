@@ -48,6 +48,9 @@ export type SaveState = "idle" | "saving" | "saved";
 
 type Props = {
   me: SessionUser;
+  /** The section on screen, from the URL — so a link can point at API keys. */
+  tab?: string;
+  onTab: (tab: string) => void;
   preferences: Preferences;
   saveState: SaveState;
   priceBooks: PriceBook[];
@@ -115,8 +118,9 @@ const TABS: { id: Tab; label: string; Icon: LucideIcon; description: string; aut
  * without pressing it.
  */
 export function SettingsPanel(props: Props) {
-  const [tab, setTab] = useState<Tab>("general");
-  const current = TABS.find(entry => entry.id === tab)!;
+  const current = TABS.find(entry => entry.id === props.tab) ?? TABS[0]!;
+  const tab = current.id;
+  const setTab = props.onTab;
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6">
@@ -202,7 +206,7 @@ export function SettingsPanel(props: Props) {
               </Button>
             }
           >
-            <ApiKeys confirmDestructive={props.preferences.confirmDestructive} />
+            <ApiKeys />
           </Section>
         ) : tab === "notifications" ? (
           <Section

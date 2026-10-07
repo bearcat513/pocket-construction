@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Portal } from "@/components/ui/portal";
+import { Portal, useEscapeLayer } from "@/components/ui/portal";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -26,17 +26,16 @@ type Props = {
  * window, and a modal that only dims part of the page is not a modal.
  */
 export function Dialog({ title, description, onClose, children, footer, className }: Props) {
+  useEscapeLayer(onClose);
+
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    // The page behind a modal should not scroll under it.
+    // The page behind must not scroll under it.
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <Portal>

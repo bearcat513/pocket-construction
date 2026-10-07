@@ -6,12 +6,16 @@ import {
   Download,
   FileDown,
   FileText,
+  GitBranch,
+  Link2,
   Loader2,
   Plus,
   Save,
   Send,
   Share2,
   ShieldCheck,
+  Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +24,10 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Menu, MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { Field, Notice, Section, StatusBadge, formatters } from "./common";
+import { useFeedback, useUnsavedChanges } from "./feedback";
+import { QuoteProgress } from "./QuoteProgress";
 import { LineConfigurator } from "./LineConfigurator";
 import { ProductPicker } from "./ProductPicker";
 import { QuoteLines } from "./QuoteLines";
@@ -68,7 +75,6 @@ type Props = {
   onShare: (id: string, title: string) => void;
   onError: (error: unknown) => void;
   onNotice: (lines: string[]) => void;
-  confirmed: (message: string) => boolean;
 };
 
 type Draft = {
@@ -165,6 +171,10 @@ export function QuoteEditor(props: Props) {
 
   const [draft, setDraft] = useState<Draft>(() => draftFrom(quote, preferences));
   const [dirty, setDirty] = useState(false);
+  const feedback = useFeedback();
+  // Leaving with unsaved lines asks first — the back arrow, the nav, Back in
+  // the browser and closing the tab alike.
+  useUnsavedChanges(dirty);
   const [busy, setBusy] = useState("");
   const [picking, setPicking] = useState(false);
   const [configuring, setConfiguring] = useState<string | null>(null);
@@ -339,13 +349,35 @@ export function QuoteEditor(props: Props) {
       props.onNotice([`Revision ${result.quote.version} created as ${result.quote.number}. The original is untouched.`]);
     });
 
-  const remove = () =>
-    quote &&
-    props.confirmed(`Delete ${quote.number}? This cannot be undone.`) &&
-    run("Deleting", async () => {
+  const remove = async () => {
+    if (!quote) return;
+    const sure = await feedback.confirm({
+      title: `Delete ${quote.number}?`,
+      message: "The estimate and every line on it are removed for good. This cannot be undone.",
+      confirmLabel: "Delete estimate",
+    });
+    if (!sure) return;
+    // Cleared first, so leaving the deleted estimate does not ask about it.
+    setDirty(false);
+    await run("Deleting", async () => {
       await api.deleteQuote(quote.id);
       props.onDeleted();
     });
+  };
+
+  // ⌘S / Ctrl+S saves, rather than offering to save the web page.
+  useEffect(() => {
+    if (!editable) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!busy) void save();
+      }
+    };
+    // `window.` because `document` here is the rendered proposal's state.
+    window.document.addEventListener("keydown", onKey);
+    return () => window.document.removeEventListener("keydown", onKey);
+  });
 
   const preview = (template: ProposalTemplate) =>
     quote &&
@@ -383,7 +415,7 @@ export function QuoteEditor(props: Props) {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2">
-          <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Back to quotes">
+          <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Back to estimates" title="Back to estimates">
             <ArrowLeft />
           </Button>
           <div className="min-w-0">
@@ -402,37 +434,38 @@ export function QuoteEditor(props: Props) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* One next step for where the estimate is now; the rest under ⋯. */}
           {editable && (
-            <Button variant="outline" onClick={save} disabled={Boolean(busy)}>
+            <Button
+              variant="outline"
+              onClick={() => void save()}
+              disabled={Boolean(busy)}
+              title="Save (⌘S)"
+            >
               {busy === "Saving" ? <Loader2 className="animate-spin" /> : <Save />} Save
             </Button>
           )}
 
           {editable && (
-            <Button onClick={submit} disabled={Boolean(busy) || blocked || !draft.lines.length}>
+            <Button onClick={() => void submit()} disabled={Boolean(busy) || blocked || !draft.lines.length}>
               {busy === "Submitting" ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
               {approvalsRequired.length ? "Submit for approval" : "Submit"}
             </Button>
           )}
 
-          {transitions.includes("sent") && (
-            <Button onClick={() => moveTo("sent")} disabled={Boolean(busy)}>
+          {quote?.status === "approved" && (
+            <Button onClick={() => void moveTo("sent")} disabled={Boolean(busy)}>
               {busy === "Sending" ? <Loader2 className="animate-spin" /> : <Send />} Mark as sent
             </Button>
           )}
           {transitions.includes("accepted") && (
-            <Button onClick={() => moveTo("accepted")} disabled={Boolean(busy)}>
+            <Button onClick={() => void moveTo("accepted")} disabled={Boolean(busy)}>
               <Check /> Accepted
             </Button>
           )}
           {transitions.includes("declined") && (
-            <Button variant="outline" onClick={() => moveTo("declined")} disabled={Boolean(busy)}>
+            <Button variant="outline" onClick={() => void moveTo("declined")} disabled={Boolean(busy)}>
               <X /> Declined
-            </Button>
-          )}
-          {transitions.includes("draft") && (
-            <Button variant="outline" onClick={() => moveTo("draft")} disabled={Boolean(busy)}>
-              Reopen as draft
             </Button>
           )}
 
@@ -445,28 +478,43 @@ export function QuoteEditor(props: Props) {
           )}
 
           {quote && (
-            <>
-              <Button variant="outline" onClick={revise} disabled={Boolean(busy)} title="Create the next revision">
-                New revision
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => props.onShare(quote.id, quote.number)}
-                aria-label="Share this estimate"
-                title="Share"
-              >
-                <Share2 />
-              </Button>
-              <Button variant="ghost" size="icon-sm" asChild title="Download as CSV">
-                <a href={api.quoteExportUrl(quote.id, "csv")} aria-label="Download this estimate as CSV">
-                  <Download />
-                </a>
-              </Button>
-            </>
+            <Menu>
+              {transitions.includes("sent") && quote.status !== "approved" && (
+                <MenuItem onSelect={() => void moveTo("sent")} disabled={Boolean(busy)}>
+                  <Send /> Mark as sent
+                </MenuItem>
+              )}
+              {transitions.includes("draft") && (
+                <MenuItem onSelect={() => void moveTo("draft")} disabled={Boolean(busy)}>
+                  <Undo2 /> Reopen as draft
+                </MenuItem>
+              )}
+              <MenuItem onSelect={() => void revise()} disabled={Boolean(busy)}>
+                <GitBranch /> New revision
+              </MenuItem>
+              <MenuItem onSelect={() => props.onShare(quote.id, quote.number)}>
+                <Share2 /> Share…
+              </MenuItem>
+              <MenuItem onSelect={() => void copyText(window.location.href).then(() => feedback.toast("success", "Link copied."))}>
+                <Link2 /> Copy link
+              </MenuItem>
+              <MenuItem href={api.quoteExportUrl(quote.id, "csv")}>
+                <Download /> Download as CSV
+              </MenuItem>
+              {editable && (
+                <>
+                  <MenuSeparator />
+                  <MenuItem destructive onSelect={() => void remove()} disabled={Boolean(busy)}>
+                    <Trash2 /> Delete estimate
+                  </MenuItem>
+                </>
+              )}
+            </Menu>
           )}
         </div>
       </div>
+
+      {quote && <QuoteProgress status={quote.status} />}
 
       <Notice kind="error" lines={priced.issues} />
       <Notice kind="warning" lines={priced.warnings} />
@@ -705,13 +753,6 @@ export function QuoteEditor(props: Props) {
             </Section>
           )}
 
-          {quote && editable && (
-            <div className="flex justify-end">
-              <Button variant="ghost" size="sm" onClick={remove} className="text-muted-foreground hover:text-destructive">
-                Delete this estimate
-              </Button>
-            </div>
-          )}
         </div>
 
         {/* ----------------------------- totals ----------------------------- */}

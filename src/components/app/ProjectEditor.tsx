@@ -20,6 +20,7 @@ import {
   type Address,
   type Project,
 } from "@/lib/types";
+import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
 type Props = {
   /** null when a job is being created. */
@@ -135,6 +136,9 @@ export function ProjectEditor({ project, accounts, directory, onSave, onClose }:
     }
   };
 
+  const { dirty } = useDirty(draft);
+  const close = useUnsavedChanges(dirty, onClose);
+
   return (
     <Sheet
       title={project ? `Edit ${project.name}` : "New project"}
@@ -143,10 +147,11 @@ export function ProjectEditor({ project, accounts, directory, onSave, onClose }:
           ? project.number
           : "A job: where the work is, who is running it, and what the contract says. The number is minted for you."
       }
-      onClose={onClose}
+      onClose={() => void close()}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={() => void close()}>
             Cancel
           </Button>
           <Button onClick={() => void save()} disabled={saving || !draft.name}>
@@ -156,7 +161,6 @@ export function ProjectEditor({ project, accounts, directory, onSave, onClose }:
         </>
       }
     >
-      {error && <Notice kind="error" lines={[error]} className="mb-3" />}
 
       <div className="space-y-4">
         <div className="grid gap-3 @md:grid-cols-2">

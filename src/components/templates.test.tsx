@@ -100,7 +100,6 @@ describe("the templates screen", () => {
         onChanged={async () => {}}
         onShare={() => {}}
         onError={() => {}}
-        confirmed={() => true}
       />,
     );
 
