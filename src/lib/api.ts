@@ -523,6 +523,19 @@ export const api = {
   catalogExportUrl: CATALOG_EXPORT_URL,
   productsCsvUrl: "/api/products/export?format=csv",
   importCatalog: (file: unknown) => send<CatalogImportReport>("/api/catalog/import", "POST", file),
+  /** A spreadsheet goes up as it is; the server reads it with the same parser as the template. */
+  importCatalogCsv: async (text: string): Promise<CatalogImportReport> => {
+    const response = await fetch("/api/catalog/import", {
+      method: "POST",
+      headers: { "Content-Type": "text/csv; charset=utf-8" },
+      body: text,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError((payload as { error?: string }).error ?? `Import failed (${response.status})`, response.status);
+    }
+    return payload as CatalogImportReport;
+  },
 
   workspaceExportUrl: WORKSPACE_EXPORT_URL,
   workspaceExportText: () => fetchText(WORKSPACE_EXPORT_URL, "The workspace export"),

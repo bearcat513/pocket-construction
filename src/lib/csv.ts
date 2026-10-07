@@ -228,3 +228,25 @@ export function parseBoolean(value: unknown, fallback: boolean): boolean {
   if (["0", "n", "no", "false", "f", "inactive", "discontinued"].includes(text)) return false;
   return fallback;
 }
+
+/* -------------------------------- writing -------------------------------- */
+
+const csvCell = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  const text = Array.isArray(value) || typeof value === "object" ? JSON.stringify(value) : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+/**
+ * Rows as RFC 4180 text — the inverse of `parseTable`.
+ *
+ * `columns` fixes the header and its order; without it the header is the union
+ * of every row's keys, so a sparse first row cannot truncate it.
+ */
+export function writeCsv(rows: Record<string, unknown>[], columns?: readonly string[]): string {
+  const headers = columns ? [...columns] : [...new Set(rows.flatMap(row => Object.keys(row)))];
+  if (!headers.length) return "";
+  return [headers.map(csvCell).join(","), ...rows.map(row => headers.map(header => csvCell(row[header])).join(","))].join(
+    "\n",
+  );
+}

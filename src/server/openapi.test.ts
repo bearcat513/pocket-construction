@@ -106,6 +106,9 @@ describe("the document", () => {
       "GET /api/site",
       "GET /api/site/images/{id}/{file}",
       "POST /api/site/contact",
+      // Blank catalogue templates: the same bytes for everyone.
+      "GET /api/catalog/templates",
+      "GET /api/catalog/templates/{file}",
     ].sort());
   });
 

@@ -32,8 +32,12 @@ bun run docker:up        # http://localhost:3000, PocketBase on :8091
 
 Open it, create an account, and press **Install the sample** in Settings — it fills the workspace
 with a worked example you can take apart: a townhome job under construction, a tenant improvement
-still out to bid, a catalogue of lumber, concrete, roofing, drywall, windows, crews, a scissor lift
-and a subcontract, and one supplier feed configured the careful way.
+still out to bid, a finished kitchen remodel waiting on its last payment, a catalogue of lumber,
+concrete, rebar, roofing, insulation, drywall, paint, windows, doors, crews, rentals and three
+subcontracts, and one supplier feed configured the careful way.
+
+Starting from your own catalogue instead? **Catalogue → Templates** has a spreadsheet to fill in —
+see [Bringing a catalogue in](#bringing-a-catalogue-in).
 
 Usable as a UI or as a local REST API — see [API](#api).
 
@@ -358,9 +362,9 @@ reported rather than failing the render — a proposal missing its logo can stil
 
 | What | Where |
 | --- | --- |
-| `*.cpq.json` | Products, price books and both kinds of rule. Meant to live in a repo next to the code that depends on it |
+| `*.catalog.json` | Products, price books and both kinds of rule. Meant to live in a repo next to the code that depends on it |
 | Quote CSV / JSON | One row per line, money as bare numbers — a CSV with `$1,234.56` in a cell sums to zero |
-| Catalogue CSV | The catalogue as a spreadsheet, nested parts flattened to something readable |
+| Catalogue CSV | The catalogue as a spreadsheet. The leading columns import back; options, tiers and assemblies are flattened to something readable |
 | Workspace JSON | Everything: catalogue, policy, customers, templates **and quotes** |
 
 Catalogue files identify records by SKU and name, never by internal id — ids are stripped on export
@@ -370,14 +374,47 @@ would half-apply leaves a catalogue nobody can reason about. Anything already pr
 name is skipped rather than overwritten, so an import is never the thing that silently changed a
 live price.
 
+### Bringing a catalogue in
+
+**Catalogue → Templates** lists four files, also at `GET /api/catalog/templates`:
+
+| File | For |
+| --- | --- |
+| `catalog-template.csv` | A spreadsheet with every column the importer reads and four example rows. Replace them with yours |
+| `catalog-template-blank.csv` | The same headings, nothing under them |
+| `catalog-template.catalog.json` | What a spreadsheet cannot hold: option groups, configuration rules, volume tiers, an assembly, a price book |
+| `supplier-feed-example.csv` | Not for Import: the price list the sample's supplier feed is mapped to. Drop it on that feed to see a sync plan |
+
+**Import** takes either a spreadsheet or a catalogue file, and both go through the same validator.
+Only `sku`, `name`, `unitOfMeasure` and `listPrice` are required. Headings are matched loosely
+(`List Price`, `list_price`, `UOM`, `Waste %`), and a sheet saved from Excel with a byte-order
+mark, semicolons or a European decimal comma reads fine. The spreadsheet reader is stricter about
+cells than about headings, because a lenient one causes expensive mistakes:
+
+- A price that cannot be read (`call us`, an empty cell) **refuses the file and names the row**.
+  It never becomes 0, because a 0 there is a free item.
+- A unit not on the list (`sq ft`) is refused, never quietly read as `EA`.
+- A column nothing recognises is reported in a warning, never dropped in silence.
+
+Nothing is written until every row is good, and a SKU already in the catalogue is left exactly as
+it is. The CSV export writes the same leading columns, so a catalogue exported from one workspace
+imports into another.
+
+A spreadsheet is for loading your *own* catalogue. Keeping costs current from a supplier's list is
+a [supplier feed](#supplier-feeds), which reviews every change before applying it.
+
 ### The worked example
 
 An empty workspace is not explorable: you cannot see what a volume tier does without an item that has
 one, or what an approval ladder does without a discount deep enough to climb it. **Install the
-sample** in Settings adds eight products (a configurable platform with editions and add-ons, usage
-and services lines, and a bundle whose components carry the price), two price books with floors,
-three pricing rules, a five-rung approval ladder, two customers, seven proposal templates, and a
-quote built to trip the ladder. The templates are the documentation for the document format:
+sample** in Settings adds 27 catalogue items across every cost type: sheet goods and sticks with
+their waste factors, ready-mix and a pump sold in fractional lots, batts, wrap and paint bought by
+the bundle, roll or gallon but measured by the square foot, configurable windows and doors, labour
+rates with overtime, monthly rentals and general conditions, three subcontracts, and two assemblies
+that pull their materials onto the estimate. It also adds two price books with floors, three
+pricing rules, a five-rung approval ladder, three clients with a job each (one being built, one out
+to bid, one finished), four invoices spread across the aging, seven proposal templates, and an
+estimate built to trip the ladder. The templates are the documentation for the document format:
 between them they use every block, the letterhead, the whole customer-facing totals list and both
 kinds of image, and **Start from an example** on the Templates screen opens any of them as a draft
 to take apart.
@@ -666,8 +703,10 @@ An `Authorization: <token>` header works too, for a script holding a PocketBase 
 | `GET` `PUT` `DELETE` | `/api/pricing-rules/:id` | One pricing rule |
 | `GET` `POST` | `/api/approval-rules` | List / create approval rules |
 | `GET` `PUT` `DELETE` | `/api/approval-rules/:id` | One approval rule |
-| `GET` | `/api/catalog/export` | Products, price books and rules as one `*.cpq.json` |
-| `POST` | `/api/catalog/import` | Create everything in a `*.cpq.json` body |
+| `GET` | `/api/catalog/export` | Products, price books and rules as one `*.catalog.json` |
+| `POST` | `/api/catalog/import` | Create everything in a `*.catalog.json` body, or a `text/csv` spreadsheet |
+| `GET` | `/api/catalog/templates` | The files a catalogue can be started from (no credential) |
+| `GET` | `/api/catalog/templates/:file` | Download one |
 | `GET` `POST` | `/api/quotes` | List (`?limit=`) / create — the server prices it |
 | `GET` | `/api/quotes/awaiting` | Quotes waiting on your approval |
 | `POST` | `/api/quotes/preview` | Price a quote without storing it |

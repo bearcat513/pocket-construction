@@ -9,6 +9,8 @@
  * JSON is the quote as this app holds it, which is the shape the API returns
  * and the shape the workspace export embeds.
  */
+import { catalogCsvRow } from "../lib/catalogCsv";
+import { writeCsv } from "../lib/csv";
 import { formatMoney } from "../lib/money";
 import {
   AGING_BUCKETS,
@@ -23,20 +25,8 @@ import type { Invoice, InvoiceCredit, InvoicePayment, InvoiceSummary, Product, Q
 
 type Row = Record<string, unknown>;
 
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const text = Array.isArray(value) || typeof value === "object" ? JSON.stringify(value) : String(value);
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 export function toCsv(rows: Row[]): string {
-  if (!rows.length) return "";
-  // Union of keys, so a sparse first row cannot truncate the header.
-  const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
-  return [
-    headers.map(csvCell).join(","),
-    ...rows.map(row => headers.map(header => csvCell(row[header])).join(",")),
-  ].join("\n");
+  return rows.length ? writeCsv(rows) : "";
 }
 
 export const toJson = (value: unknown): string => JSON.stringify(value, null, 2);
@@ -217,39 +207,25 @@ export function agingRows(report: AgingReport): Row[] {
 /* ------------------------------- catalogue ------------------------------- */
 
 /**
- * The catalogue as a spreadsheet: one row per product, with the nested parts
- * flattened to something readable rather than to JSON in a cell.
+ * The catalogue as a spreadsheet: one row per product, in the columns
+ * `src/lib/catalogCsv.ts` reads back, followed by the nested parts flattened
+ * to something readable rather than to JSON in a cell.
  *
- * This is the export for a person; `*.catalog.json` is the export for the app, and
- * it is the one that round-trips. A catalogue edited in Excel and pasted back
- * is not a thing this file pretends to support.
+ * The leading columns round-trip — export from one workspace, import into
+ * another. The trailing ones are for a person: options, tiers and assemblies
+ * do not fit in a cell, and the import says so when it finds them filled in.
+ * `*.catalog.json` is the export that carries everything.
  */
 export function productRows(products: Product[]): Row[] {
   return products.map(product => ({
-    sku: product.sku,
-    name: product.name,
-    family: product.family,
-    description: product.description,
-    chargeType: product.chargeType,
-    billingPeriod: product.chargeType === "recurring" ? product.billingPeriod : "",
-    unitOfMeasure: product.unitOfMeasure,
-    currency: product.currency,
-    listPrice: product.listPrice,
-    cost: product.cost,
+    ...catalogCsvRow(product),
     marginPercent: product.listPrice ? Math.round(((product.listPrice - product.cost) / product.listPrice) * 1000) / 10 : 0,
-    active: product.active,
-    minQuantity: product.minQuantity,
-    maxQuantity: product.maxQuantity || "",
-    floorDiscountPercent: product.floorDiscountPercent,
     optionGroups: product.optionGroups.map(group => `${group.name} (${group.options.length})`).join("; "),
     options: product.optionGroups.flatMap(group => group.options.map(option => option.name)).join("; "),
     configurationRules: product.rules.length,
     bundleComponents: product.components.map(component => `${component.sku}×${component.quantity}`).join("; "),
     volumeTiers: product.volumeTiers
       .map(tier => `${tier.minQuantity}-${tier.maxQuantity ?? "∞"}: ${tier.kind} ${tier.value}`)
-      .join("; "),
-    attributes: Object.entries(product.attributes)
-      .map(([key, value]) => `${key}=${value}`)
       .join("; "),
   }));
 }

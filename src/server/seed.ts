@@ -1,8 +1,8 @@
 /**
  * Installing the worked example from `src/lib/samples.ts`.
  *
- * One call fills an empty account with a catalogue, the policy around it, two
- * customers, seven proposal templates, a quote that actually trips the
+ * One call fills an empty account with a catalogue, the policy around it, three
+ * clients and their jobs, seven proposal templates, a quote that actually trips the
  * approval ladder and a receivables book spread across the aging — so the
  * first thing a new account sees is the app doing its job rather than nine
  * empty lists.
@@ -233,7 +233,8 @@ export async function installSample(token: string, approverEmail: string, validD
   if (created.catalogSources) {
     notes.push(
       "The sample supplier feed syncs costs and specification but not your sell price, may not create items, " +
-        "and holds anything moving more than 20% for review. Paste the example CSV into it to see a plan.",
+        "and holds anything moving more than 20% for review. Download the supplier price list from " +
+        "Catalogue → Templates and drop it on the feed to see a plan.",
     );
   }
 
@@ -400,7 +401,7 @@ export async function installSample(token: string, approverEmail: string, validD
   }
 
   if (created.invoices) {
-    notes.push("The receivables book has one settled invoice, one a fortnight late and one badly overdue.");
+    notes.push("The receivables book has one settled invoice, one current, one a fortnight late and one badly overdue.");
   }
 
   return { created, skipped, quoteId, notes };

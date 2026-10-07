@@ -250,6 +250,11 @@ describe("what stays a modal", () => {
     const plan = await Bun.file(new URL("./app/SyncPlanDialog.tsx", import.meta.url)).text();
     expect(plan).toContain("components/ui/dialog");
     expect(plan).not.toContain("components/ui/sheet");
+
+    // So is the template list: a column guide to read, with nothing to fill in.
+    const templates = await Bun.file(new URL("./app/CatalogTemplatesDialog.tsx", import.meta.url)).text();
+    expect(templates).toContain("components/ui/dialog");
+    expect(templates).not.toContain("components/ui/sheet");
   });
 
   test("the customer editor sizes itself against the panel it is in", async () => {

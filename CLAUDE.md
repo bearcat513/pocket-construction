@@ -193,6 +193,15 @@ stakes are sharper: a client that could set its own balance could mark its own d
   symbols, thousands separators, a European decimal comma). `split(",")` fails *silently* on a quoted
   description and shifts every column after it by one, which puts a weight in a price field. An
   unreadable price is **null, never 0**
+- `src/lib/catalogCsv.ts` — the catalogue as a spreadsheet, both ways. It reads rows into the same
+  raw shape a `*.catalog.json` holds and hands that to `parseCatalogFile`, so a spreadsheet import
+  has no rules of its own. It is **strict about cells and loose about headings**: an unreadable
+  number or a unit off the list refuses the whole file and names the row (`readProduct` alone would
+  read them as 0 and EA). `CATALOG_CSV_COLUMNS` is also the export's column list, so adding a field
+  means adding it there once
+- `src/lib/catalogTemplates.ts` — the downloadable starting points (`GET /api/catalog/templates`).
+  Each body is built from data, and `catalogTemplates.test.ts` imports every one through the real
+  parser. The example rows are deliberately not the sample's SKUs
 - `src/lib/catalogSync.ts` — **what a supplier feed would change, decided before anything is
   written.** Pure: hand it rows and the catalogue and it returns a reviewable plan. Four rules, each
   because the alternative has cost somebody money: a plan is *proposed* before it is applied (preview

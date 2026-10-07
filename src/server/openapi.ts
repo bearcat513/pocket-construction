@@ -21,6 +21,8 @@ import { MAX_PDF_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NA
 import { FUNCTION_NAMES } from "../lib/formula";
 import { DEFAULT_PREFERENCES, PREFERENCE_LIMITS, ACCENTS, FONTS, THEMES } from "../lib/preferences";
 import { SYNC_ACTIONS } from "../lib/catalogSync";
+import { CATALOG_CSV_COLUMNS } from "../lib/catalogCsv";
+import { CATALOG_TEMPLATES } from "../lib/catalogTemplates";
 import { AGING_BUCKETS } from "../lib/receivable";
 import {
   ACCOUNT_STATUSES,
@@ -787,7 +789,7 @@ export const OPERATIONS: Operation[] = [
     path: "/api/catalog/export",
     tag: "Catalogue",
     operationId: "exportCatalog",
-    summary: "Download products, price books and rules as *.cpq.json",
+    summary: "Download products, price books and rules as *.catalog.json",
     responses: { "200": fileResponse("The catalogue file.", "application/json") },
   },
   {
@@ -795,15 +797,56 @@ export const OPERATIONS: Operation[] = [
     path: "/api/catalog/import",
     tag: "Catalogue",
     operationId: "importCatalog",
-    summary: "Create everything in a *.cpq.json body",
+    summary: "Create everything in a *.catalog.json body, or a spreadsheet sent as text/csv",
     description:
       "Additive: anything already here under the same SKU or name is left exactly as it is, and " +
-      "the report says what was created and what was skipped.",
-    requestBody: jsonBody("A catalogue file, as `GET /api/catalog/export` produced it.", {
-      type: "object",
-      additionalProperties: true,
-    }),
+      "the report says what was created and what was skipped. A `text/csv` body is one item per row, " +
+      "in the columns of `GET /api/catalog/templates/catalog-template.csv`; a cell that cannot be read " +
+      "(a price that is not a number, a unit not on the list) refuses the whole file and names the row. " +
+      `Columns: ${CATALOG_CSV_COLUMNS.map(spec => (spec.required ? `\`${spec.column}\` (required)` : `\`${spec.column}\``)).join(", ")}.`,
+    requestBody: {
+      required: true,
+      description: "A catalogue file, as `GET /api/catalog/export` produced it, or a catalogue spreadsheet.",
+      content: {
+        "application/json": { schema: { type: "object", additionalProperties: true } },
+        "text/csv": { schema: { type: "string" } },
+      },
+    },
     responses: { "200": jsonResponse("What came in.", ref("CatalogImportReport")) },
+  },
+  {
+    method: "get",
+    path: "/api/catalog/templates",
+    tag: "Catalogue",
+    operationId: "listCatalogTemplates",
+    summary: "List the files a catalogue can be started from",
+    anonymous: true,
+    responses: { "200": jsonResponse("Each template, with where to download it.", array(ref("CatalogTemplate"))) },
+  },
+  {
+    method: "get",
+    path: "/api/catalog/templates/{file}",
+    tag: "Catalogue",
+    operationId: "getCatalogTemplate",
+    summary: "Download one catalogue template",
+    description: `One of ${CATALOG_TEMPLATES.map(template => `\`${template.file}\``).join(", ")}.`,
+    anonymous: true,
+    parameters: [
+      {
+        name: "file",
+        in: "path",
+        required: true,
+        description: "The template's file name, as the list gives it.",
+        schema: { type: "string", enum: CATALOG_TEMPLATES.map(template => template.file) },
+      },
+    ],
+    responses: {
+      "200": {
+        ...fileResponse("The template.", "text/csv"),
+        content: { "text/csv": { schema: { type: "string" } }, "application/json": { schema: { type: "object" } } },
+      },
+      "404": responseRef("NotFound"),
+    },
   },
 
   /* ---------------------------- supplier feeds -------------------------- */
@@ -2376,6 +2419,13 @@ function schemas(): Record<string, Json> {
       description: "A price book: one price, and optionally one floor, per SKU.",
     },
 
+    CatalogTemplate: object("A file to start a catalogue from.", {
+      file: string_("The file name it downloads as."),
+      title: string_("What it is, in a few words."),
+      description: string_("What it is for and how to use it."),
+      contentType: string_("Its media type."),
+      url: string_("Where to download it."),
+    }),
     CatalogImportReport: object("What a catalogue import did.", {
       created: { type: "object", description: "How many of each kind were created.", additionalProperties: { type: "integer" } },
       skipped: array(string_("Something already here, named.")),

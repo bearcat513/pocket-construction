@@ -17,7 +17,7 @@ import { TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, startTestPocketBase } from "./te
 import { DEFAULT_PREFERENCES, PREFERENCE_LIMITS } from "../lib/preferences";
 import { WORKSPACE_FILE_KIND } from "../lib/workspaceFile";
 import { CATALOG_FILE_KIND } from "../lib/catalogFile";
-import { SAMPLE_PRODUCTS } from "../lib/samples";
+import { SAMPLE_INVOICES, SAMPLE_PRODUCTS, SAMPLE_PROJECTS } from "../lib/samples";
 
 const PORT = 3100 + Math.floor(Math.random() * 400);
 const BASE = `http://localhost:${PORT}`;
@@ -1432,6 +1432,37 @@ describe("what comes out", () => {
     expect((await json("/api/products", { cookie: carol })).map((p: any) => p.sku)).toContain("PLAT");
   });
 
+  signedIn("a spreadsheet imports through the same route, and a bad cell refuses all of it", async () => {
+    const send = (text: string) =>
+      fetch(`${BASE}/api/catalog/import`, {
+        method: "POST",
+        headers: { "Content-Type": "text/csv", cookie },
+        body: text,
+      }).then(response => response.json() as Promise<any>);
+
+    // The downloadable template is the thing people start from; it has to import.
+    const template = await (await fetch(`${BASE}/api/catalog/templates/catalog-template.csv`)).text();
+    const imported = await send(template);
+    expect(imported.created.products).toBeGreaterThanOrEqual(4);
+    expect((await json("/api/products")).map((p: any) => p.sku)).toContain("PLY-CDX-34");
+
+    // Nothing is written until every row is good.
+    const refused = await send("sku,name,unitOfMeasure,listPrice\nCSV-OK,Fine,EA,10\nCSV-BAD,Broken,EA,call us");
+    expect(refused.error).toContain("Row 3 (CSV-BAD)");
+    expect((await json("/api/products")).map((p: any) => p.sku)).not.toContain("CSV-OK");
+  });
+
+  test("the catalogue templates download without a credential", async () => {
+    const list = (await (await fetch(`${BASE}/api/catalog/templates`)).json()) as any[];
+    expect(list.map(entry => entry.file)).toContain("catalog-template.catalog.json");
+    for (const entry of list) {
+      const response = await fetch(`${BASE}${entry.url}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toContain(entry.file);
+    }
+    expect((await fetch(`${BASE}/api/catalog/templates/nope.csv`)).status).toBe(404);
+  });
+
   signedIn("a catalogue file from a newer version is refused", async () => {
     const payload = await post("/api/catalog/import", { kind: CATALOG_FILE_KIND, version: 99, products: [] });
     expect(payload.error).toContain("version 99");
@@ -1504,7 +1535,7 @@ describe("the worked example", () => {
 
     // The jobs and the supplier feed come with it, and the estimate is
     // attached to the job rather than floating loose.
-    expect(first.created.projects).toBe(2);
+    expect(first.created.projects).toBe(SAMPLE_PROJECTS.length);
     expect(first.created.catalogSources).toBe(1);
 
     const estimate = await json(`/api/quotes/${first.quoteId}`, { cookie: dave });
@@ -1515,19 +1546,19 @@ describe("the worked example", () => {
     expect(second.created.products ?? 0).toBe(0);
     expect(second.skipped.products).toBe(SAMPLE_PRODUCTS.length);
     expect(second.created.projects ?? 0).toBe(0);
-    expect(second.skipped.projects).toBe(2);
+    expect(second.skipped.projects).toBe(SAMPLE_PROJECTS.length);
   });
 
   signedIn("it arrives with a receivables book spread across the aging", async () => {
     const erin = await register(`erin-${suffix}@example.com`);
     const report = await post("/api/sample", {}, { cookie: erin });
 
-    expect(report.created.invoices).toBe(3);
+    expect(report.created.invoices).toBe(SAMPLE_INVOICES.length);
 
     // The invoices went in through the ordinary path, so they are issued,
     // dated, and one of them is part paid.
     const invoices = await json("/api/invoices", { cookie: erin });
-    expect(invoices).toHaveLength(3);
+    expect(invoices).toHaveLength(SAMPLE_INVOICES.length);
     expect(invoices.every((one: any) => one.state === "issued")).toBe(true);
     expect(invoices.every((one: any) => one.issueDate && one.dueDate)).toBe(true);
     expect(invoices.some((one: any) => one.totals.paidAmount > 0)).toBe(true);
@@ -1540,11 +1571,11 @@ describe("the worked example", () => {
     expect(aged.paidAmount).toBeGreaterThan(0);
     expect(aged.buckets["90+"].count).toBe(1);
 
-    // And a second install does not raise the same three again.
+    // And a second install does not raise the same ones again.
     const again = await post("/api/sample", {}, { cookie: erin });
     expect(again.created.invoices ?? 0).toBe(0);
-    expect(again.skipped.invoices).toBe(3);
-    expect(await json("/api/invoices", { cookie: erin })).toHaveLength(3);
+    expect(again.skipped.invoices).toBe(SAMPLE_INVOICES.length);
+    expect(await json("/api/invoices", { cookie: erin })).toHaveLength(SAMPLE_INVOICES.length);
   });
 });
 

@@ -143,7 +143,9 @@ import {
   readEmail,
   type Shareable,
 } from "./server/share";
+import { parseCatalogCsv } from "./lib/catalogCsv";
 import { catalogFileName, parseCatalogFile, serializeCatalogFile } from "./lib/catalogFile";
+import { CATALOG_TEMPLATES, catalogTemplate, catalogTemplateUrl } from "./lib/catalogTemplates";
 import { defaultSelection, validateConfiguration } from "./lib/configurator";
 import { evaluateApprovals } from "./lib/approvals";
 import { FUNCTION_NAMES, parseFormula } from "./lib/formula";
@@ -1050,15 +1052,44 @@ const server = serve({
     },
 
     /**
-     * Imports a `*.catalog.json` file.
+     * Files to start a catalogue from. No credential: they are the same bytes
+     * for everyone and say nothing about anybody's workspace.
+     */
+    "/api/catalog/templates": {
+      GET: handler(async () =>
+        Response.json(
+          CATALOG_TEMPLATES.map(({ file, title, description, contentType }) => ({
+            file,
+            title,
+            description,
+            contentType,
+            url: catalogTemplateUrl(file),
+          })),
+        ),
+      ),
+    },
+
+    "/api/catalog/templates/:file": {
+      GET: handler<{ params: { file: string } }>(async req => {
+        const template = catalogTemplate(req.params.file);
+        if (!template) return fail("There is no template by that name.", 404);
+        return fileResponse(template.body(), template.contentType, template.file);
+      }),
+    },
+
+    /**
+     * Imports a `*.catalog.json` file, or a spreadsheet sent as `text/csv`.
      *
      * The whole document is validated before anything is written, and a name
      * or SKU that is already taken is skipped rather than overwritten — an
      * import should never be the thing that silently changed a live price.
+     * A spreadsheet is read into the same shape first, so it meets exactly
+     * the same rules.
      */
     "/api/catalog/import": {
       POST: guarded(async (token, req) => {
-        const parsed = parseCatalogFile(await readJson(req));
+        const isCsv = (req.headers.get("content-type") ?? "").toLowerCase().startsWith("text/csv");
+        const parsed = isCsv ? parseCatalogCsv(await req.text()) : parseCatalogFile(await readJson(req));
         if (!parsed.ok) return fail(parsed.error);
 
         const created: Record<string, number> = {};

@@ -11,7 +11,21 @@ import { api, type Meta, type SessionUser } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { ACCENTS, CURRENCIES, FONTS, PREFERENCE_LIMITS, THEMES, type Preferences } from "@/lib/preferences";
 import type { PriceBook, ProposalTemplate } from "@/lib/types";
+import {
+  SAMPLE_ACCOUNTS,
+  SAMPLE_INVOICES,
+  SAMPLE_PRICE_BOOKS,
+  SAMPLE_PRODUCTS,
+  SAMPLE_PROJECTS,
+  SAMPLE_TEMPLATES,
+} from "@/lib/samples";
 import { cn } from "@/lib/utils";
+
+/** Counted from the sample itself, so the sentence cannot fall behind it. */
+const SAMPLE_SUMMARY =
+  `${SAMPLE_PRODUCTS.length} catalogue items, ${SAMPLE_PRICE_BOOKS.length} price books, ` +
+  `${SAMPLE_ACCOUNTS.length} clients with ${SAMPLE_PROJECTS.length} jobs, an estimate that needs approval, ` +
+  `${SAMPLE_INVOICES.length} invoices and ${SAMPLE_TEMPLATES.length} document templates.`;
 
 export type SaveState = "idle" | "saving" | "saved";
 
@@ -237,7 +251,7 @@ export function SettingsPanel(props: Props) {
           <p className="text-xs text-muted-foreground">
             {props.hasCatalogue
               ? "Additive — anything already here by the same SKU or name is left exactly as it is."
-              : "Eight products, two price books, three pricing rules, five approval rules and a sample quote."}
+              : SAMPLE_SUMMARY}
           </p>
         </div>
       </Section>

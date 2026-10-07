@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Download,
+  FileSpreadsheet,
   FileUp,
   Package,
   Pencil,
@@ -19,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
 import { EmptyState, Section, formatters } from "./common";
 import { CatalogSourceEditor } from "./CatalogSourceEditor";
+import { CatalogTemplatesDialog } from "./CatalogTemplatesDialog";
 import { PriceBookEditor } from "./PriceBookEditor";
 import { ProductEditor } from "./ProductEditor";
 import { SyncPlanDialog } from "./SyncPlanDialog";
@@ -65,6 +67,7 @@ export function CatalogView(props: Props) {
   const [editingBook, setEditingBook] = useState<PriceBook | null | undefined>(undefined);
   const [editingSource, setEditingSource] = useState<CatalogSource | null | undefined>(undefined);
   const importRef = useRef<HTMLInputElement>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   /** The plan on screen, and which source produced it. */
   const [plan, setPlan] = useState<{ source: CatalogSource; result: SyncResult; body?: string } | null>(null);
@@ -180,10 +183,12 @@ export function CatalogView(props: Props) {
     }
   };
 
-  /** Importing a `*.catalog.json` file: read it here, validate on the server. */
+  /** Importing a `*.catalog.json` file or a spreadsheet: read it here, validate on the server. */
   const importFile = async (file: File) => {
     try {
-      const report = await api.importCatalog(JSON.parse(await file.text()));
+      const text = await file.text();
+      const isCsv = /\.(csv|tsv|txt)$/i.test(file.name) || file.type === "text/csv";
+      const report = isCsv ? await api.importCatalogCsv(text) : await api.importCatalog(JSON.parse(text));
       await props.onChanged();
       const created = Object.entries(report.created)
         .map(([what, count]) => `${count} ${what}`)
@@ -212,7 +217,7 @@ export function CatalogView(props: Props) {
             <input
               ref={importRef}
               type="file"
-              accept=".json,application/json"
+              accept=".json,.csv,.tsv,application/json,text/csv"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
@@ -220,7 +225,15 @@ export function CatalogView(props: Props) {
                 if (file) void importFile(file);
               }}
             />
-            <Button variant="outline" size="sm" onClick={() => importRef.current?.click()}>
+            <Button variant="ghost" size="sm" onClick={() => setShowTemplates(true)}>
+              <FileSpreadsheet /> Templates
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importRef.current?.click()}
+              title="A spreadsheet (.csv) or a *.catalog.json file"
+            >
               <Upload /> Import
             </Button>
             <Button variant="outline" size="sm" asChild>
@@ -236,8 +249,11 @@ export function CatalogView(props: Props) {
       >
         {products.length === 0 ? (
           <EmptyState title="The catalogue is empty">
-            Add an item, import a <code>*.catalog.json</code> file, connect a supplier feed below, or install the
-            worked example from Settings.
+            Add an item, import a spreadsheet or a <code>*.catalog.json</code> file —{" "}
+            <button type="button" className="underline underline-offset-2" onClick={() => setShowTemplates(true)}>
+              the templates
+            </button>{" "}
+            show the columns — connect a supplier feed below, or install the worked example from Settings.
           </EmptyState>
         ) : (
           <>
@@ -626,6 +642,8 @@ export function CatalogView(props: Props) {
       {editingSource !== undefined && (
         <CatalogSourceEditor source={editingSource} onSave={saveSource} onClose={() => setEditingSource(undefined)} />
       )}
+
+      {showTemplates && <CatalogTemplatesDialog onClose={() => setShowTemplates(false)} />}
 
       {plan && (
         <SyncPlanDialog
