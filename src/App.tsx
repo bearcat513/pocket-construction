@@ -1,0 +1,659 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Building2,
+  FileText,
+  Globe,
+  HardHat,
+  LayoutList,
+  LogOut,
+  Package,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Receipt,
+  ScrollText,
+  Settings,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { AccountsView } from "@/components/app/AccountsView";
+import { BrandLockup, BrandMark } from "@/components/app/Brand";
+import { ApprovalsQueue } from "@/components/app/ApprovalsQueue";
+import { AuthPanel } from "@/components/app/AuthPanel";
+import { Website } from "@/components/site/Website";
+import { WebsiteView } from "@/components/app/WebsiteView";
+import { CatalogView } from "@/components/app/CatalogView";
+import { ProjectsView } from "@/components/app/ProjectsView";
+import { Notice, type NoticeKind } from "@/components/app/common";
+import { QuoteEditor } from "@/components/app/QuoteEditor";
+import { QuoteList } from "@/components/app/QuoteList";
+import { ReceivablesView } from "@/components/app/ReceivablesView";
+import { RulesView } from "@/components/app/RulesView";
+import { SettingsPanel, type SaveState } from "@/components/app/SettingsPanel";
+import { ShareDialog } from "@/components/app/ShareDialog";
+import { TemplatesView } from "@/components/app/TemplatesView";
+import { api, isUnauthorized, type DirectoryUser, type Meta, type Shareable, type SessionUser } from "@/lib/api";
+import { DEFAULT_PREFERENCES, normalizePreferences, type Preferences } from "@/lib/preferences";
+import type {
+  Account,
+  ApprovalRule,
+  CatalogSource,
+  PriceBook,
+  PricingRule,
+  Product,
+  Project,
+  ProposalTemplate,
+  Quote,
+  QuoteSummary,
+} from "@/lib/types";
+import { cn } from "@/lib/utils";
+import "./index.css";
+
+type View =
+  | "quotes"
+  | "approvals"
+  | "receivables"
+  | "projects"
+  | "catalog"
+  | "rules"
+  | "customers"
+  | "templates"
+  | "website"
+  | "settings";
+
+type Banner = { kind: NoticeKind; lines: string[] } | null;
+
+/** The record whose share list is open, if any. */
+type Sharing = { kind: Shareable; id: string; title: string } | null;
+
+/** How long the app sits on a preference change before writing it. */
+const PREFERENCE_SAVE_DELAY_MS = 500;
+
+const NAV: { id: View; label: string; Icon: typeof LayoutList }[] = [
+  { id: "projects", label: "Projects", Icon: HardHat },
+  { id: "quotes", label: "Estimates", Icon: ScrollText },
+  { id: "approvals", label: "Approvals", Icon: ShieldCheck },
+  { id: "receivables", label: "Receivables", Icon: Receipt },
+  { id: "catalog", label: "Materials", Icon: Package },
+  { id: "rules", label: "Rules", Icon: LayoutList },
+  { id: "customers", label: "Clients", Icon: Building2 },
+  { id: "templates", label: "Templates", Icon: FileText },
+];
+
+/** Shown only to an account that may change the public website. */
+const WEBSITE_NAV = { id: "website" as const, label: "Website", Icon: Globe };
+
+/**
+ * `/site` is the public website whoever is looking, so an editor can see the
+ * page as a visitor does. Everywhere else, a visitor who has not signed in
+ * sees it in place of the sign-in form.
+ */
+const SITE_PATH = "/site";
+
+/** Matches the <title> in index.html. */
+const APP_TITLE = "Sitelines — construction estimating and billing";
+
+export function App() {
+  // undefined while the session is still being checked, null when signed out.
+  const [me, setMe] = useState<SessionUser | null | undefined>(undefined);
+  /** Signed out: the website, or the sign-in form someone asked for from it. */
+  const [signingIn, setSigningIn] = useState(false);
+  const onPublicSite = typeof window !== "undefined" && window.location.pathname === SITE_PATH;
+
+  // Projects first: on a construction job everything else hangs off one, so
+  // the list of jobs is the honest landing page.
+  const [view, setView] = useState<View>("projects");
+  const [banner, setBanner] = useState<Banner>(null);
+  const [sharing, setSharing] = useState<Sharing>(null);
+
+  /* Everything this account can see. */
+  const [quotes, setQuotes] = useState<QuoteSummary[]>([]);
+  const [awaiting, setAwaiting] = useState<QuoteSummary[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [priceBooks, setPriceBooks] = useState<PriceBook[]>([]);
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
+  const [approvalRules, setApprovalRules] = useState<ApprovalRule[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [catalogSources, setCatalogSources] = useState<CatalogSource[]>([]);
+  const [templates, setTemplates] = useState<ProposalTemplate[]>([]);
+  const [meta, setMeta] = useState<Meta | null>(null);
+  /** Everyone with an account here, for the pickers that name a person. */
+  const [directory, setDirectory] = useState<DirectoryUser[]>([]);
+
+  /** The quote on screen: an id being read, null for a new one, undefined for none. */
+  const [openQuote, setOpenQuote] = useState<Quote | null | undefined>(undefined);
+
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [preferenceSave, setPreferenceSave] = useState<SaveState>("idle");
+  const preferenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Read by callbacks that must not be rebuilt every time a preference
+  // changes — `refresh` is a dependency of half the effects below.
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
+
+  /**
+   * Shows what went wrong — or drops back to the sign-in screen when the
+   * session is the thing that went wrong.
+   */
+  const fail = useCallback((error: unknown) => {
+    if (isUnauthorized(error)) {
+      setMe(null);
+      return;
+    }
+    setBanner({ kind: "error", lines: [error instanceof Error ? error.message : "Something went wrong."] });
+  }, []);
+
+  const notice = useCallback((lines: string[]) => setBanner({ kind: "info", lines: lines.filter(Boolean) }), []);
+
+  /* ------------------------------ loading ------------------------------- */
+
+  const refresh = useCallback(async () => {
+    const [
+      nextQuotes,
+      nextAwaiting,
+      nextProducts,
+      nextBooks,
+      nextPricing,
+      nextApproval,
+      nextAccounts,
+      nextTemplates,
+      nextProjects,
+      nextSources,
+    ] = await Promise.all([
+      api.listQuotes(preferencesRef.current.quoteListLimit),
+      api.quotesAwaitingMe(),
+      api.listProducts(),
+      api.listPriceBooks(),
+      api.listPricingRules(),
+      api.listApprovalRules(),
+      api.listAccounts(),
+      api.listProposalTemplates(),
+      api.listProjects(),
+      api.listCatalogSources(),
+    ]);
+
+    setQuotes(nextQuotes);
+    setAwaiting(nextAwaiting);
+    setProducts(nextProducts);
+    setPriceBooks(nextBooks);
+    setPricingRules(nextPricing);
+    setApprovalRules(nextApproval);
+    setAccounts(nextAccounts);
+    setTemplates(nextTemplates);
+    setProjects(nextProjects);
+    setCatalogSources(nextSources);
+  }, []);
+
+  const loadWorkspace = useCallback(async () => {
+    await refresh();
+
+    // A directory is a convenience, not a dependency: an instance that has
+    // dropped the hook still works, you just type the address.
+    try {
+      setDirectory((await api.directory()).users);
+    } catch {
+      setDirectory([]);
+    }
+
+    // The storage line doubles as an outage signal: PocketBase is a separate
+    // service, and "unreachable" explains every other error on the page.
+    try {
+      setMeta(await api.meta());
+    } catch {
+      setMeta(null);
+    }
+  }, [refresh]);
+
+  useEffect(() => {
+    void api
+      .me()
+      .then(({ user }) => setMe(user))
+      .catch(() => setMe(null));
+  }, []);
+
+  useEffect(() => {
+    if (me) void loadWorkspace().catch(fail);
+  }, [me, loadWorkspace, fail]);
+
+  // The website titles the tab after the business; signed in, it is the app again.
+  useEffect(() => {
+    if (me && !onPublicSite) document.title = APP_TITLE;
+  }, [me, onPublicSite]);
+
+  /**
+   * Preferences ride along on the session, so they are here before the first
+   * paint rather than after a correction.
+   */
+  useEffect(() => {
+    if (me) setPreferences(me.preferences);
+  }, [me]);
+
+  /** The theme is a class on <html>; "system" follows the OS, live. */
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = preferences.theme === "dark" || (preferences.theme === "system" && media.matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [preferences.theme]);
+
+  /**
+   * The accent and the reading face are attributes on the same element, which
+   * is all styles/globals.css needs: both are a handful of custom properties
+   * keyed off `[data-accent]` / `[data-font]`, so changing one re-tints or
+   * re-sets the whole app without a re-render.
+   */
+  useEffect(() => {
+    document.documentElement.dataset.accent = preferences.accent;
+    document.documentElement.dataset.font = preferences.font;
+  }, [preferences.accent, preferences.font]);
+
+  // A pending save would otherwise fire into a page that is going away.
+  useEffect(() => () => clearTimeout(preferenceTimer.current ?? undefined), []);
+
+  /* ---------------------------- preferences ----------------------------- */
+
+  /**
+   * Preferences save themselves a beat after the last change. Normalizing here
+   * rather than trusting the response keeps the controls from jumping: the
+   * server applies the same clamps to the same object and has nothing left to
+   * correct.
+   */
+  const applyPreferences = (next: Preferences) => {
+    setPreferences(next);
+    setPreferenceSave("saving");
+    clearTimeout(preferenceTimer.current ?? undefined);
+    preferenceTimer.current = setTimeout(() => {
+      void api
+        .savePreferences(next)
+        .then(() => setPreferenceSave("saved"))
+        .catch(error => {
+          setPreferenceSave("idle");
+          fail(error);
+        });
+    }, PREFERENCE_SAVE_DELAY_MS);
+  };
+
+  const updatePreferences = (patch: Partial<Preferences>) =>
+    applyPreferences(normalizePreferences({ ...preferences, ...patch }));
+
+  /** Guards a delete, unless the account has asked not to be asked. */
+  const confirmed = (message: string) => !preferences.confirmDestructive || window.confirm(message);
+
+  /* ------------------------------- quotes -------------------------------- */
+
+  const openQuoteById = async (id: string) => {
+    setBanner(null);
+    try {
+      setOpenQuote(await api.getQuote(id));
+      setView("quotes");
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const onQuoteSaved = (quote: Quote) => {
+    setOpenQuote(quote);
+    void refresh().catch(fail);
+  };
+
+  async function signOut() {
+    try {
+      await api.logout();
+    } catch {
+      // The cookie is being dropped either way.
+    }
+    setMe(null);
+    setOpenQuote(undefined);
+  }
+
+  /* -------------------------------- render ------------------------------- */
+
+  if (onPublicSite) {
+    return (
+      <Website
+        signInLabel={me ? "Back to the app" : "Sign in"}
+        onSignIn={() => window.location.assign("/")}
+      />
+    );
+  }
+
+  if (me === undefined) {
+    return <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">Loading…</div>;
+  }
+
+  if (me === null) {
+    return signingIn ? (
+      <AuthPanel
+        onSignedIn={user => {
+          setSigningIn(false);
+          setMe(user);
+        }}
+        onBack={() => setSigningIn(false)}
+      />
+    ) : (
+      <Website signInLabel="Sign in" onSignIn={() => setSigningIn(true)} />
+    );
+  }
+
+  const editingQuote = openQuote !== undefined;
+  const navCollapsed = preferences.navCollapsed;
+
+  return (
+    <div className="slab min-h-screen text-foreground">
+      <div className="mx-auto flex max-w-[110rem] flex-col gap-0 lg:flex-row">
+        {/* ------------------------------ nav ------------------------------ */}
+
+        <aside
+          className={cn(
+            "bg-sidebar/70 text-sidebar-foreground shrink-0 border-b backdrop-blur-[2px]",
+            "transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "lg:rail lg:flex lg:h-screen lg:flex-col lg:border-r lg:border-b-0",
+            // Collapsing is a desktop affordance: on a phone the nav is
+            // already a horizontal strip, and there is nothing to reclaim.
+            navCollapsed ? "lg:w-16" : "lg:w-56",
+          )}
+        >
+          <div className={cn("flex items-center px-4 py-3.5", navCollapsed && "lg:justify-center lg:px-0")}>
+            {navCollapsed ? (
+              <span className="group hidden lg:block">
+                <BrandMark />
+              </span>
+            ) : (
+              <BrandLockup />
+            )}
+            {/* Collapsed on a desktop, the lockup still belongs on a phone,
+                where the nav is a strip across the top and has the room. */}
+            {navCollapsed && <BrandLockup className="lg:hidden" />}
+          </div>
+
+          <nav className="flex gap-1 overflow-x-auto px-2 pb-2 lg:flex-col lg:overflow-visible">
+            {[...NAV, ...(me.siteEditor ? [WEBSITE_NAV] : [])].map(({ id, label, Icon }) => {
+              const active = view === id && !editingQuote;
+              const badge = id === "approvals" && awaiting.length > 0 ? awaiting.length : 0;
+
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setView(id);
+                    setOpenQuote(undefined);
+                    setBanner(null);
+                  }}
+                  // The label is gone when collapsed, so the tooltip and the
+                  // accessible name have to carry it instead.
+                  title={navCollapsed ? label : undefined}
+                  aria-label={label}
+                  className={cn(
+                    "group relative flex items-center gap-2 rounded-md px-3 py-2 text-sm whitespace-nowrap",
+                    "transition-[color,background-color,transform] duration-200",
+                    navCollapsed && "lg:justify-center lg:px-0",
+                    active
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground motion-safe:hover:translate-x-0.5",
+                  )}
+                >
+                  {/* The page you are on is marked the way a leaf is veined:
+                      a stroke drawn down its length, not a filled block. */}
+                  {active && (
+                    <span
+                      aria-hidden="true"
+                      className="bg-primary motion-safe:animate-weld absolute top-1.5 bottom-1.5 left-0 w-[3px] origin-top rounded-full"
+                    />
+                  )}
+                  <Icon
+                    className={cn(
+                      "size-4 shrink-0 transition-transform duration-200",
+                      active ? "text-primary" : "motion-safe:group-hover:scale-110",
+                    )}
+                  />
+                  <span className={cn(navCollapsed && "lg:hidden")}>{label}</span>
+
+                  {badge > 0 &&
+                    (navCollapsed ? (
+                      // Collapsed, the count has nowhere to sit beside the
+                      // label, so it becomes a corner dot with the number.
+                      <span className="bg-alert motion-safe:animate-throb absolute top-1 right-1 hidden size-4 items-center justify-center rounded-full text-[10px] font-medium text-white lg:flex">
+                        {badge > 9 ? "9+" : badge}
+                      </span>
+                    ) : (
+                      <Badge tone="pending">{badge}</Badge>
+                    ))}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="mt-auto hidden border-t px-2 py-2 lg:block">
+            <button
+              type="button"
+              onClick={() => {
+                setView("settings");
+                setOpenQuote(undefined);
+              }}
+              title={navCollapsed ? (me.name || me.email) : undefined}
+              aria-label="Settings"
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+                navCollapsed && "justify-center px-0",
+                view === "settings" ? "bg-accent font-medium" : "text-muted-foreground hover:bg-accent/60",
+              )}
+            >
+              <Settings className="size-4 shrink-0" />
+              {!navCollapsed && <span className="min-w-0 flex-1 truncate text-left">{me.name || me.email}</span>}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              title={navCollapsed ? "Sign out" : undefined}
+              aria-label="Sign out"
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/60",
+                navCollapsed && "justify-center px-0",
+              )}
+            >
+              <LogOut className="size-4 shrink-0" />
+              {!navCollapsed && "Sign out"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => updatePreferences({ navCollapsed: !navCollapsed })}
+              title={navCollapsed ? "Expand the navigation" : "Collapse the navigation"}
+              aria-label={navCollapsed ? "Expand the navigation" : "Collapse the navigation"}
+              aria-expanded={!navCollapsed}
+              className={cn(
+                "mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/60",
+                navCollapsed && "justify-center px-0",
+              )}
+            >
+              {navCollapsed ? (
+                <PanelLeftOpen className="size-4 shrink-0" />
+              ) : (
+                <>
+                  <PanelLeftClose className="size-4 shrink-0" /> Collapse
+                </>
+              )}
+            </button>
+          </div>
+        </aside>
+
+        {/* ----------------------------- content --------------------------- */}
+
+        <main className="min-w-0 flex-1 space-y-4 p-4 lg:h-screen lg:overflow-y-auto">
+          <div className="flex items-center justify-end gap-2 lg:hidden">
+            <Button variant="ghost" size="sm" onClick={() => setView("settings")}>
+              <Settings /> {me.email}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+              <LogOut />
+            </Button>
+          </div>
+
+          {banner && (
+            <div className="relative">
+              <Notice kind={banner.kind} lines={banner.lines} className="pr-8" />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="absolute top-1 right-1"
+                onClick={() => setBanner(null)}
+                aria-label="Dismiss"
+              >
+                <X />
+              </Button>
+            </div>
+          )}
+
+          {/*
+           * Keyed on what is being shown, so React remounts the whole screen
+           * when you move between them and the entrance animation runs again.
+           * Without the key the class is applied once, at first paint, and
+           * every view after that arrives without ceremony.
+           */}
+          <div key={editingQuote ? `quote:${openQuote?.id ?? "new"}` : view} className="motion-safe:animate-extend">
+            {editingQuote ? (
+              <QuoteEditor
+                quote={openQuote}
+                me={me}
+                preferences={preferences}
+                products={products}
+                priceBooks={priceBooks}
+                accounts={accounts}
+                projects={projects}
+                pricingRules={pricingRules}
+                approvalRules={approvalRules}
+                templates={templates}
+                onSaved={onQuoteSaved}
+                onDeleted={() => {
+                  setOpenQuote(undefined);
+                  void refresh().catch(fail);
+                }}
+                onBack={() => setOpenQuote(undefined)}
+                onShare={(id, title) => setSharing({ kind: "quotes", id, title })}
+                onError={fail}
+                onNotice={notice}
+                confirmed={confirmed}
+              />
+            ) : view === "quotes" ? (
+              <QuoteList
+                quotes={quotes}
+                preferences={preferences}
+                onOpen={id => void openQuoteById(id)}
+                onNew={() => setOpenQuote(null)}
+              />
+            ) : view === "approvals" ? (
+              <ApprovalsQueue quotes={awaiting} preferences={preferences} onOpen={id => void openQuoteById(id)} />
+            ) : view === "receivables" ? (
+              <ReceivablesView
+                accounts={accounts}
+                templates={templates}
+                preferences={preferences}
+                onError={fail}
+                onNotice={notice}
+                confirmed={confirmed}
+              />
+            ) : view === "projects" ? (
+              <ProjectsView
+                projects={projects}
+                accounts={accounts}
+                directory={directory}
+                preferences={preferences}
+                myId={me.id}
+                onChanged={refresh}
+                onOpenQuote={id => void openQuoteById(id)}
+                onShare={(kind, id, title) => setSharing({ kind, id, title })}
+                onError={fail}
+                confirmed={confirmed}
+              />
+            ) : view === "catalog" ? (
+              <CatalogView
+                products={products}
+                priceBooks={priceBooks}
+                catalogSources={catalogSources}
+                preferences={preferences}
+                myId={me.id}
+                onChanged={refresh}
+                onShare={(kind, id, title) => setSharing({ kind, id, title })}
+                onError={fail}
+                onNotice={notice}
+                confirmed={confirmed}
+              />
+            ) : view === "rules" ? (
+              <RulesView
+                pricingRules={pricingRules}
+                approvalRules={approvalRules}
+                products={products}
+                directory={directory}
+                onChanged={refresh}
+                onError={fail}
+                confirmed={confirmed}
+              />
+            ) : view === "customers" ? (
+              <AccountsView
+                accounts={accounts}
+                priceBooks={priceBooks}
+                preferences={preferences}
+                onChanged={refresh}
+                onError={fail}
+                onOpenQuote={id => void openQuoteById(id)}
+                onOpenReceivables={() => setView("receivables")}
+                confirmed={confirmed}
+              />
+            ) : view === "templates" ? (
+              <TemplatesView
+                templates={templates}
+                sellerName={me.name}
+                sellerEmail={me.email}
+                locale={preferences.locale}
+                myId={me.id}
+                onChanged={refresh}
+                onShare={(kind, id, title) => setSharing({ kind, id, title })}
+                onError={fail}
+                confirmed={confirmed}
+              />
+            ) : view === "website" && me.siteEditor ? (
+              <WebsiteView onError={fail} onNotice={notice} confirmed={confirmed} />
+            ) : (
+              <SettingsPanel
+                me={me}
+                preferences={preferences}
+                saveState={preferenceSave}
+                priceBooks={priceBooks}
+                templates={templates}
+                meta={meta}
+                hasCatalogue={products.length > 0}
+                onChange={updatePreferences}
+                onReset={() => applyPreferences({ ...DEFAULT_PREFERENCES })}
+                onSampleInstalled={refresh}
+                onError={fail}
+                onNotice={notice}
+              />
+            )}
+          </div>
+        </main>
+      </div>
+
+      {sharing && (
+        <ShareDialog
+          kind={sharing.kind}
+          id={sharing.id}
+          title={sharing.title}
+          viewerEmail={me.email}
+          directory={directory}
+          onClose={() => setSharing(null)}
+          onChanged={() => void refresh().catch(fail)}
+        />
+      )}
+    </div>
+  );
+}

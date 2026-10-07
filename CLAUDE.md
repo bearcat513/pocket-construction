@@ -1,0 +1,413 @@
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+
+Server:
+
+```ts#index.ts
+import index from "./index.html"
+
+Bun.serve({
+  routes: {
+    "/": index,
+    "/api/users/:id": {
+      GET: (req) => {
+        return new Response(JSON.stringify({ id: req.params.id }));
+      },
+    },
+  },
+  // optional websocket support
+  websocket: {
+    open: (ws) => {
+      ws.send("Hello, world!");
+    },
+    message: (ws, message) => {
+      ws.send(message);
+    },
+    close: (ws) => {
+      // handle close
+    }
+  },
+  development: {
+    hmr: true,
+    console: true,
+  }
+})
+```
+
+HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
+
+```html#index.html
+<html>
+  <body>
+    <h1>Hello, world!</h1>
+    <script type="module" src="./frontend.tsx"></script>
+  </body>
+</html>
+```
+
+With the following `frontend.tsx`:
+
+```tsx#frontend.tsx
+import React from "react";
+import { createRoot } from "react-dom/client";
+
+// import .css files directly and it works
+import './index.css';
+
+const root = createRoot(document.body);
+
+export default function Frontend() {
+  return <h1>Hello, world!</h1>;
+}
+
+root.render(<Frontend />);
+```
+
+Then, run index.ts
+
+```sh
+bun --hot ./index.ts
+```
+
+For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+
+## This project
+
+A construction estimating and project-billing app: **projects** (the jobs), a building-material
+**catalogue** (waste factors, purchase multiples, CSI divisions, coverage, assemblies), price books,
+pricing and approval rules, **estimates**, proposal documents, the receivables ledger the accepted
+ones turn into, and **supplier feeds** that keep the catalogue's costs current.
+
+**A record is called one thing in the code and another on screen, on purpose.** The stored types stay
+`Product`, `Quote` and `Account`; the UI says *item*, *estimate* and *client*. Renaming 32k lines of
+working code would have been a cosmetic change with a migration and a template-token break attached,
+and contractors say "quote" anyway. Keep the split: don't rename the types, and don't let "product"
+or "customer" back into user-facing strings.
+
+Storage is **PocketBase**, not `bun:sqlite`. The app and the database run together under Docker
+Compose (`bun run docker:up`).
+
+**Access control lives in PocketBase, not in the Bun server.** Every request carries the caller's
+own credential — an httpOnly cookie, an `Authorization` header, or an `X-API-Key` — and the
+collection rules decide what they may see. The server holds no credentials and can grant nothing on
+its own. Never reintroduce a superuser client for ordinary reads and writes; if something needs
+privilege, it belongs in `docker/pb_hooks/` as a route, the way sharing, approver stamping, key
+issuing and Telegram do.
+
+**An API key is a credential, not a second access model.** `site_` plus 40 random characters; only
+its SHA-256 is stored, hidden, so the raw value exists in the issuing response and nowhere else. A
+middleware in `docker/pb_hooks/lib/apiKeys.js` resolves one to its owner's `@request.auth`, which is
+the whole point: every rule already written applies to a key unchanged. `clientFor` in
+`src/server/pocketbase.ts` picks the header by the prefix for the SDK, and `authHeaders` does the
+same for a raw `fetch` to a hook route — **a key sent as `Authorization` reads as anonymous**, so
+never hand-write that header. **A key may not manage keys** — issuing and revoking take
+`requireSessionToken`, and PocketBase refuses a key of its own accord, because revocation is how you
+recover from a leak. `api_keys` is deliberately *not* in `OWNED`: it keys off `user`, set by the
+hook that creates the record.
+
+**The API documents itself from one list.** `src/server/openapi.ts` holds every endpoint, and all
+three surfaces print it: `GET /api/openapi.json` (the document), `GET /api` (its index, via
+`endpointIndex()`), and `/docs` (a React page that fetches and renders it, and can call it). Adding
+a route means adding an operation there — never a second list somewhere else, and never a bound
+retyped rather than imported from `lib/`. `src/lib/openapiDoc.ts` reads a document back and knows
+nothing about this API, so a new endpoint appears on `/docs` with nothing else to change.
+`src/server/openapi.test.ts` asserts that every documented path is one the route table answers on.
+OpenAPI 3.0.3, not 3.1 — every tool reads 3.0 today.
+
+**Telegram reports supplier-feed syncs, and the bot token never leaves PocketBase.** A sync is the
+one job here that runs unattended, so it is the one worth a message. `src/lib/telegram.ts` decides
+*whether* (`shouldNotify`: a chat linked, the event wanted, enough rows, and — by default — only a
+sync run with an API key, since one run from the screen has its answer on screen) and *what*
+(`syncMessage`, plain text). `docker/pb_hooks/lib/telegram.js` holds the token and makes every call
+to Telegram; `src/server/telegram.ts` only relays. The bot is the account's own pasted token or the
+operator's `TELEGRAM_BOT_TOKEN`, set on the **PocketBase** container, never the app. `telegram_links`
+has every rule closed and the token hidden; the chat is set **by pairing alone** (a six-character
+code from an alphabet with no O/0 or I/1, sent to the bot), never by a settings body. A notification
+is fired after the sync's answer is decided and never awaited — one that fails lands in
+`last_error` and must not turn a sync that worked into one that did not.
+The same holds for the two other events, an estimate marked accepted/declined and a payment
+recorded (`notify` in `src/server/telegram.ts`, called from those two routes). Both are **off by
+default**, so an accounting integration posting payments under a key isn't a flood, and both go to
+the *caller's* chat under the same API-key rule. Telling a record's owner about what somebody else
+did would mean sending to another user's chat, which is a hook-side privilege nothing grants yet.
+
+**The server prices every quote and totals every invoice it stores.** Totals in a request body are
+ignored and overwritten. The engine is pure and lives in `src/lib/`, so the browser runs it for live
+feedback and the server runs the same code for the record — never fork them. For an invoice the
+stakes are sharper: a client that could set its own balance could mark its own debts paid.
+
+- `src/lib/pricing.ts` — the pricing pipeline, and `PRICING_VARIABLES` for the rule editors
+- `src/lib/money.ts` — round at every step, to the currency's precision; sum rounded numbers only
+- `src/lib/formula.ts` — the expression language (no `eval`), shared by pricing, approvals and
+  product validation
+- `src/lib/configurator.ts` — option groups and configuration rules
+- `src/lib/units.ts` — **the take-off math, and the thing to understand before touching a line.** A
+  construction line carries two quantities: the `quantity` an estimator measured, and the
+  `orderQuantity` that has to be bought — the take-off plus the material's waste factor, rounded up
+  to its purchase multiple. The order quantity is **derived on every pricing pass and never
+  stored**, because a stored one has waste applied to it again on the next save and grows by 10%
+  every time somebody opens the estimate, quietly. Waste is applied *before* the lot rounding, so one
+  adjustment is never compounded into the other. Nothing here converts between units: square feet
+  become bundles at a rate that is a property of one product (`coverage`), not of the units
+- `src/lib/projects.ts` — the job roll-up (offered, accepted, invoiced, paid, outstanding, backlog)
+  and the searching behind the projects list. Pure, and **nothing is stored** — every figure is a
+  function of the estimates and invoices attached to the job, for the same reason an invoice has no
+  stored balance — and it **never adds up two currencies**. `backlogValue` is the file's only clamp:
+  billing past the accepted total is ordinary on a job in its last month, and negative backlog reads
+  as a bug
+- `src/lib/csv.ts` — a real RFC 4180 reader, plus the number parsing a supplier feed needs (currency
+  symbols, thousands separators, a European decimal comma). `split(",")` fails *silently* on a quoted
+  description and shifts every column after it by one, which puts a weight in a price field. An
+  unreadable price is **null, never 0**
+- `src/lib/catalogSync.ts` — **what a supplier feed would change, decided before anything is
+  written.** Pure: hand it rows and the catalogue and it returns a reviewable plan. Four rules, each
+  because the alternative has cost somebody money: a plan is *proposed* before it is applied (preview
+  and sync run the same function, the preview just stops); a feed owns **only the fields the policy
+  names** — waste factors, option groups, assemblies, discount ceilings and, unless deliberately
+  allowed, the sell price are not a supplier's to set; a price move past `maxPriceChangePercent` is
+  **flagged, not applied**, and waits for a person to accept it by key; and **nothing is ever
+  deleted** — an item the feed has dropped can be deactivated, and only if asked, because it stays on
+  every estimate that already quotes it. An empty feed cell never blanks a field that has a value: a
+  supplier leaving a cell empty means "I have nothing to say"
+- `src/lib/customers.ts` — the customer roll-up (open pipeline, won, win rate) and the searching
+  and sorting behind the customers list. Pure, and it **never adds up two currencies**: a quote
+  written in something other than the account's currency is counted and reported, never summed
+- `src/lib/approvals.ts` — the approval ladder. Levels are cumulative, an edit voids decisions, and
+  a rule asks several people with separate approve/reject quorums. A request's `status` is derived
+  by `requestStatus` from the votes it carries, never assigned
+- `src/lib/receivable.ts` — accounts receivable, and the one file to read before touching an
+  invoice. **Nothing about an invoice's condition is stored**: only `state` (draft / issued / void)
+  is recorded, and `invoiceStatus` derives open, part paid, paid and overdue from the ledger and the
+  date every time they are asked for — a stored "overdue" is wrong the morning after it is written.
+  The totals split in two for the same reason: `lineTotals` is a pure function of the invoice's own
+  lines and is stored with it, while `settlement` (paid, credited, **balance**) is a function of two
+  other collections and is recomputed on every read. A balance **may go negative** — an overpaid
+  invoice owes money back, and clamping it at zero loses a customer's money. Aging buckets the
+  balance, not the total, and never adds two currencies
+- `src/lib/document.ts` — `{{token}}` rendering, escaped per format, and the repeating line
+  block. It knows nothing about quotes or invoices: a **vocabulary** supplies the values
+- `src/lib/proposal.ts` / `src/lib/invoiceDocument.ts` — the two vocabularies, one per
+  `TemplateKind`. Templates are **one collection with a `kind`**, because a template is a
+  template — same editor, same letterhead, same block language — and only the meaning of a
+  token differs. A quote template will not render an invoice: every token would resolve to a
+  blank, so the route refuses it rather than sending a document full of holes. The invoice
+  vocabulary derives `{{invoice.status}}` and the balance **as it renders** — see
+  `receivable.ts` — so an invoice printed the morning after it falls due says so
+- `src/lib/pdf.ts` / `pdfFonts.ts` — a dependency-free PDF writer: a top-down cursor, tables that
+  paginate, the standard 14 fonts and WinAnsi encoding, and image XObjects. No embedded fonts
+- `src/lib/image.ts` — what may go on a document. It **decodes nothing**: a JPEG is PDF's
+  `DCTDecode` stream and a PNG's `IDAT` is `FlateDecode` with a predictor, so an embeddable image
+  is copied in byte for byte and everything else (alpha, interlace, CMYK, progressive) is refused
+  with a sentence. `src/lib/imageFile.ts` is the browser-only converter that makes those refusals
+  invisible in the UI — it flattens and re-encodes through a canvas
+- `src/lib/pdfTemplate.ts` — PDF templates as a block document. Pure, so the editor's preview is
+  rendered by the same code as the download. One renderer, two vocabularies: it draws a
+  `PdfSource` (`quotePdfSource` / `invoicePdfSource`) and never sees a quote or an invoice
+  itself. Its totals lists are closed and customer-facing: no template of either kind has a
+  way to name cost or margin, and neither can name the other kind's numbers. Branding — an `image` block, and a `header`
+  letterhead drawn on every page — lives **inside the template** as a `data:` URL, so it survives
+  an export, a share and an import; `tools/sampleBrand.ts` draws the sample workspace's logo
+- `src/lib/validate.ts` — every untrusted input, shared by the REST API and the file importer
+- `src/server/quotes.ts` — pricing orchestration, lifecycle and revisions
+- `src/server/catalogSync.ts` — the impure half of a sync and nothing else: fetching a feed (a
+  timeout, an 8 MB cap, no credentials) and writing an approved plan. Writes go through
+  `createProduct` / `updateProduct` and `readProduct` with the caller's own token, so a synced item is
+  exactly as legal as a typed one and "the feed did it" is never an explanation for a record that
+  should not exist. One bad row is reported and skipped; it never abandons the other four hundred
+- `src/server/invoices.ts` — the receivables orchestration, and where three rules are enforced
+  rather than left to the UI: **an issued invoice's lines are fixed** (change what is owed with a
+  credit, not an edit), **only an issued invoice has a ledger** (nothing to pay against a draft),
+  and **nothing ever issued is deleted** — invoice numbers have to be gapless, so a draft may be
+  discarded and anything past that is voided. Voiding is refused once a payment exists; an
+  over-credit is refused because unlike an overpayment it is always a typo on your own side.
+  `invoiceQuote` bills a sent or accepted quote for its whole contract value, with the quote
+  discount, any adjustment and shipping as their own lines, and warns rather than hides it when the
+  total lands a penny off the quote's. Billing a subscription period by period is a billing
+  schedule — the obvious next layer, and deliberately not here
+- `src/server/db.ts` — the collections. Every call takes a token and is async
+- `src/server/share.ts` — proxies to PocketBase's `/api/build/...` hook routes: sharing, approver
+  stamping, and the account directory (`GET /api/directory`, id/email/name only). All three need to
+  read `users`, which no user token may do, so they live in `docker/pb_hooks/`
+- `docker/pb_migrations/` — collections, ownership fields, API rules. A schema change is a new
+  migration file here, not a dashboard edit, or a fresh volume comes up without it. **A JSON field
+  reaches the JSVM as a byte array (`types.JSONRaw`)**, so reading one, mutating it and saving runs
+  without error and writes nothing — do data backfills in SQL with SQLite's `json_set`, the way
+  `1750000004_multi_approver.js` does, and test the statement (`src/server/migration.test.ts`).
+  `1750000009_construction.js` adds `projects` and `catalog_sources` and the `project` relations, and
+  deliberately backfills **nothing**: `toProduct` defaults `costType` and the specification on read,
+  the way `toAccount` repairs accounts written before contacts existed.
+  `1750000007_ledger_collections.js` fans a JSON array *out* into rows with `json_each`, and its
+  statements are tested the same way — it is the one migration that moves data rather than adding
+  to it, so a dropped row would be a customer's payment with nothing left to recover it from
+- `docker/pb_hooks/` — server-side JS run by PocketBase's own JSVM, not by Bun. **A hook body
+  cannot see its file's scope**: declare what a handler needs inside the handler, or `require` it
+  there. Code that breaks this rule registers fine and fails only at runtime
+
+Each collection keeps real columns for what the database queries on and one JSON field for the
+nested domain object the app reads whole.
+
+**The look is steel and concrete, and it lives in `styles/globals.css`.** The palette is oklch —
+cool concrete, graphite ink, and the signal colours of a plant floor for anything live, late or
+wrong — with a dark mode that is the same shop on the night shift. Corners are machined rather
+than moulded (`--radius` is `0.25rem`, so `rounded-sm` is square). Four utilities carry it: `slab`
+(the page: flat concrete, a drafting grid and raking light), `panel` (a plate laid on it — cards,
+form panels, menus), `rail` (the scribed line down the nav's mounting edge) and `seam` (the
+hairline a panel seam leaves under a heading). Use those rather than `bg-card` / `bg-background`
+for surfaces, and `font-display` for titles and for a number meant to read as machined.
+`--font-serif` still exists, but only for the reading faces that offer a serif — no chrome is set
+in it.
+
+**The accent and the reading face are preferences.** Seven signal colours, each one a `--tint-hue`
+and a chroma trim under `[data-accent=…]`, from which every tinted role (`--primary`, `--ring`,
+the sidebar's live colours) is *derived* — so never write a colour literal for one of those
+roles, and add an accent by adding the hue there and the name to `ACCENTS`. The status tones do
+not follow it: `--signal` still means paid and `--alert` still means overdue, or a state told by
+colour would start lying the moment somebody picked that colour. Those four (`signal`, `hazard`,
+`alert`, `flare`) are mapped through `@theme inline`, so they change with the theme and
+`text-alert` needs no `dark:` twin. **Their lightness is solved, not chosen**: a chip is the tone
+at 10% over the panel behind it, and each tone is as dark (or as light) as it has to be to clear
+4.5:1 against both that chip and the bare ground — which is why `--hazard` reads bronze in the
+light theme. Retune one and check the pair again before shipping it. The face is `--font-sans`
+under `[data-font=…]`, system stacks only; headings keep `--font-display`. `App.tsx` puts both on
+`<html>`, which is why the settings swatches can carry their own `data-accent` and paint
+themselves.
+
+**Texture is a background layer, never anything text sits on**, and it is built from repeating
+gradients rather than an SVG noise tile — a tiled `feTurbulence` seams visibly at the tile edges
+and puts a faint checkerboard across the page. The drafting grid (`--mesh`) is on `slab` only: it
+would restart at the corner of every panel laid on it, and a grid that does not line up with the
+grid beside it is worse than none. The mill grain (`--tooth`) tiles at four pixels, so panels wear
+that instead.
+
+**Motion is `motion-safe:` and under half a second.** The named animations (`rise`, `extend`,
+`settle`, `weld`, `tilt`, `drift`, `throb`) are declared as `--animate-*` in the theme, so use
+`animate-rise` rather than an inline keyframe. They are machine motion — driven along an axis on a
+sharp ease, nothing overshoots. Entrance animations fill `both` and therefore start at
+`opacity: 0` — which is why a screenshot tool that does not run animations photographs an empty
+page. `prefers-reduced-motion` is honoured globally at the bottom of the stylesheet.
+
+**Forms are panels, previews are modals.** Every editor opens in `components/ui/sheet.tsx` — a
+right-hand, full-height panel. Only things meant to be read (a rendered proposal, a PDF) use
+`components/ui/dialog.tsx`. The sheet's body is a `@container`, so forms inside it use container
+queries (`@md:grid-cols-2`), never viewport ones — `sm:grid-cols-4` would still be four columns in
+a 500px panel. `src/components/sheet.test.tsx` asserts both halves of that rule, the sync plan's
+modal included.
+
+**A project is the record everything hangs off, and none of its money is stored.** A client is a
+relationship; a project is the thing that gets built, gets billed and gets argued about — two
+buildings for one developer share an account and share nothing else. `quotes` and `invoices` each
+carry a `project` relation, and nulls are expected: a bid is very often written before there is a job
+record, and forcing one into existence first would make the fast path the awkward one. The one
+stored number is `contractValue`, because an awarded contract sum is *negotiated* after the estimate
+is accepted more often than not; `projectStats` reports what the estimates actually say beside it, so
+a disagreement is visible rather than resolved by guessing.
+
+**A supplier feed is a reviewed record, not a dialog.** `catalog_sources` holds where a feed comes
+from, how its columns map onto catalogue fields, and what a sync may change — and that last part is
+the reason it is stored and reviewable rather than retyped under time pressure. The sync plan is the
+one new screen that is a **modal** rather than a panel, because it is a document to be read and
+checked over rather than filled in.
+
+**Receivables are separate collections, not a quote state.** A quote is an offer that gets revised
+and superseded; an invoice is a number sitting in somebody's accounts payable. `invoices` keeps
+`state`, `dueDate` and `total` as real columns, and keeps **no `status` and no `balance` column at
+all** — both are derived, for the reason in `src/lib/receivable.ts`.
+
+**A payment and a credit are records, not entries in the invoice's JSON.** `payments` and `credits`
+are their own collections, each row belonging to one invoice, which buys three things: recording one
+is an *insert*, so two people banking cash at the same moment cannot lose a payment (the old
+read-modify-write of the whole invoice could, and `src/server/api.test.ts` has a concurrency test
+that would catch a regression); "what came in last month" becomes answerable without opening every
+invoice; and each row has an owner, a created date and a durable id. Their access rules key off
+`invoice.owner` rather than the row's own owner — that is what stops a signed-in stranger filing a
+payment against your invoice. Every list of invoices goes through `withLedgers` in
+`src/server/db.ts`, which reads the ledger in **two queries for the whole page** rather than two per
+invoice; no other code path may assemble a summary, or it would produce a balance that ignores the
+payments behind it. An
+account carries `paymentTermDays` (the number an invoice's due date is computed from, seeded out of
+the free-text "Net 30" for rows written before receivables) and an advisory `creditLimit`: nothing
+here blocks a quote on it, because a limit somebody typed last year would be wrong more often than
+right. A new collection needs adding to `OWNED` in `docker/pb_hooks/rules/ownership.js`, or its
+records are created with no owner and every rule misses them.
+
+**A customer is a record with people in it.** An account carries a `contacts` list — one of them
+`primary`, which is who a quote is addressed to and what `snapshotCustomer` flattens onto the
+document — plus a lifecycle `status`, free-text `tags`, and a shipping address that is kept equal
+to the billing one while `shippingSameAsBilling`. `readAccount` repairs rather than refuses: a body
+written before contacts existed (`contactName`/`contactEmail`/`contactPhone`) becomes a one-contact
+account, and a list with no primary or several gets exactly one. `toAccount` does the same for rows
+stored before the list existed, which is why this shipped without a data migration. The customers
+screen is a list until you pick one, and then it is `CustomerDetail` — that customer's quote
+history from `GET /api/accounts/:id/quotes`, because `/api/quotes` is capped at a page.
+
+**A field that names another record is a `Combobox`, not an `Input`.** `components/ui/combobox.tsx`
+— searchable, portalled to `document.body` so the panel's `overflow-y-auto` cannot clip it, and
+dismissing on an outside click without also closing the panel behind it. `productOptions` and
+`familyOptions` build the lists. `src/components/combobox.test.tsx` asserts each reference field is
+bound to one. Approver and share pickers offer the account directory; anything a
+picker cannot find is still typable, since an address may be named before it registers.
+
+**The public website is the instance's, not an account's.** A visitor who has not signed in sees
+`components/site/Website.tsx` (the contractor's own landing page, ported from the klein-remodeling
+repo) instead of the sign-in form; `/site` shows it to anyone, for previewing. Its words and pictures
+are `site_texts` and `site_images`, and **`site_config` is the layout** — one row puts one text or image
+in one slot at a position, so swapping a photo or reordering services never edits the content. The
+slots are the closed list `SITE_SLOTS` in `src/lib/site.ts`, and `resolvePage` drops any placement
+the page cannot draw; adding a slot means adding it there *and* drawing it in `Website.tsx`. None of
+these collections is in `OWNED`: reading is public, writing takes `siteEditor` on the user — granted
+to the first account (`setup/adopt.js`) or from the dashboard, and stripped from any request that
+tries to set it (`rules/site.js`). `contact_requests` is the one collection a stranger can create in;
+its create rule forbids setting `status`, only an editor can read it back, and the Bun route adds a
+honeypot and a per-sender limit. Images are served through `GET /api/site/images/:id/:file`, because
+the browser cannot reach PocketBase; the seed photos live in `docker/pb_migrations/website/`. The
+site's palette and webfonts are scoped under `.site` in `styles/globals.css` so neither theme leaks
+into the other.
+
+Anything that persists lives in the account's preferences (`src/lib/preferences.ts`); nothing in
+the UI writes to `localStorage`.
+
+**A catalogue item's user-facing shape.** `costType` (material / labor / equipment / subcontract /
+other) is how a job cost report adds it up and is a real column, beside `division` and
+`manufacturer`, because the materials list filters on all three. `chargeType` still means *when* it
+is billed and still matters here: equipment is rented by the month, which is what `recurring` is for.
+`unitOfMeasure` is a closed list (`UNITS_OF_MEASURE`) rather than free text, because a catalogue that
+cannot tell "SF" from "sq ft" will happily multiply a price per square foot by a quantity in sheets.
+Everything else the materials work added — the waste factor, the purchase multiple, the
+`MaterialSpec` and the sync `provenance` — lives in the existing `definition` JSON and needed no
+schema change, which is the point of one JSON field per collection.
+
+`bun test` builds and starts throwaway PocketBase containers; without Docker, those tests skip.

@@ -1,0 +1,647 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Steel and concrete.
+ *
+ * This app turns a take-off into a number somebody has to honour and then
+ * into an invoice somebody has to pay, so it is dressed as the site that
+ * runs it: a cold concrete ground, panels of mill-finish plate laid on it,
+ * everything squared off and set out on a drafting grid, with the signal
+ * colours of a plant floor carrying anything that means "this is live",
+ * "this is late", "this is done".
+ *
+ * Every colour is oklch, which is what makes a palette this neutral hold
+ * together: the greys are all one hue with the lightness stepped and barely
+ * any chroma, so a panel sits *on* the ground rather than being a different
+ * metal, and the signal colours stay at the same weight as each other rather
+ * than one shouting over the rest.
+ *
+ * Two rules the rest of the app depends on:
+ *
+ * - **Nothing is styled by colour alone.** The status tones still differ in
+ *   shape and wording; the palette only makes them legible at a glance.
+ * - **Texture never touches legibility.** The grid and the mill grain are
+ *   background layers at a few percent, so text always sits on flat colour.
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /*
+   * The signal tones, which mean something and therefore change with the
+   * light rather than being one value with a `dark:` twin at every call site.
+   * `text-alert` is the whole of "this invoice is overdue", in both themes.
+   */
+  --color-signal: var(--signal);
+  --color-hazard: var(--hazard);
+  --color-alert: var(--alert);
+  --color-flare: var(--flare);
+
+  /* The public website's own brand, defined only under `.site` below. */
+  --color-brand: var(--brand);
+  --color-brand-light: var(--brand-light);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 1px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
+}
+
+/*
+ * The brand's own names, which are deliberately *materials* rather than
+ * shades.
+ *
+ * `bg-alert/10` says what it is for in a way `bg-orange-600/10` never does,
+ * and when the palette is retuned there is one place to do it.
+ */
+@theme {
+  /*
+   * The display face: headings, the wordmark, and any number meant to read as
+   * machined rather than typed. A grotesque cut narrow, because that is what
+   * gets stencilled on a panel and silk-screened on a rating plate.
+   *
+   * The stack is system faces and nothing else — a webfont would be a network
+   * dependency on a tool that runs locally, and the first paint would be in
+   * the fallback anyway.
+   */
+  --font-display:
+    "Archivo Narrow", "Roboto Condensed", "Liberation Sans Narrow", "Helvetica Neue", "Segoe UI Semibold", ui-sans-serif,
+    system-ui, sans-serif;
+
+  /* Kept for the reading faces that offer a serif, and for nothing else:
+     the chrome is set in `--font-display` throughout. */
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, ui-serif, serif;
+
+  /* The materials. */
+  --color-concrete: oklch(0.945 0.004 258);
+  --color-mill: oklch(0.988 0.003 258);
+  --color-graphite: oklch(0.215 0.014 262);
+  --color-gunmetal: oklch(0.42 0.018 260);
+  /* Arc light: the brightest thing in the building, used once, on the sign-in
+     screen. Not a status. */
+  --color-voltage: oklch(0.72 0.16 196);
+
+  /*
+   * Machine motion: linear in, nothing overshoots, nothing bounces. The
+   * easing is sharp at the start and long at the end — a pneumatic cylinder
+   * rather than a leaf — and every duration is under half a second, because
+   * an animation you notice twice is one you will resent by the hundredth
+   * quote.
+   */
+  --animate-rise: rise 0.32s cubic-bezier(0.2, 0, 0, 1) both;
+  --animate-extend: extend 0.4s cubic-bezier(0.2, 0, 0, 1) both;
+  --animate-settle: settle 0.28s cubic-bezier(0.2, 0, 0, 1) both;
+  --animate-weld: weld 0.28s cubic-bezier(0.2, 0, 0, 1) both;
+  --animate-tilt: tilt 3.2s ease-in-out infinite;
+  --animate-drift: drift 34s ease-in-out infinite alternate;
+  --animate-throb: throb 2.4s ease-in-out infinite;
+}
+
+/* ------------------------------- the ground ------------------------------- */
+
+:root {
+  /* Machined, not moulded: enough to take the edge off, not enough to round
+     anything. `rounded-sm` lands on a square corner deliberately. */
+  --radius: 0.25rem;
+
+  --background: oklch(0.945 0.004 258);
+  --foreground: oklch(0.215 0.014 262);
+  --card: oklch(0.988 0.003 258);
+  --card-foreground: oklch(0.215 0.014 262);
+  --popover: oklch(0.993 0.002 258);
+  --popover-foreground: oklch(0.215 0.014 262);
+  --secondary: oklch(0.906 0.006 258);
+  --secondary-foreground: oklch(0.28 0.014 262);
+  --muted: oklch(0.918 0.005 258);
+  --muted-foreground: oklch(0.485 0.013 260);
+  --destructive: oklch(0.545 0.2 27);
+  --border: oklch(0.868 0.007 258);
+  --input: oklch(0.884 0.008 258);
+
+  /*
+   * The signal tones. Fixed, and never derived from the accent — see the
+   * accent section for why.
+   *
+   * Their lightness is not a taste: each one is set in the same colour it is
+   * printed on (a chip is the tone at 10% over the panel behind it), so each
+   * is as dark as it has to be to clear 4.5:1 against its own chip and
+   * against the bare ground. Amber has to go a long way down to do that,
+   * which is why `--hazard` reads bronze here and gold on the night shift.
+   */
+  --signal: oklch(0.505 0.13 152);
+  --hazard: oklch(0.525 0.105 80);
+  --alert: oklch(0.54 0.16 43);
+  --flare: oklch(0.545 0.19 27);
+
+  /* The plant's own colours, in the order a chart will reach for them. A fill
+     is not text, so these keep more chroma than the tones above. */
+  --chart-1: oklch(0.52 0.15 255);
+  --chart-2: oklch(0.6 0.13 80);
+  --chart-3: oklch(0.575 0.175 43);
+  --chart-4: oklch(0.495 0.105 210);
+  --chart-5: oklch(0.5 0.13 152);
+
+  /* The rail the app is bolted to: a heavier plate than the ground it holds. */
+  --sidebar: oklch(0.906 0.007 258);
+  --sidebar-foreground: oklch(0.25 0.014 262);
+  --sidebar-border: oklch(0.845 0.008 258);
+
+  /*
+   * The drafting grid the ground is set out on: one square, at a size that
+   * reads as a machine bed rather than as graph paper.
+   *
+   * Gradients rather than an SVG tile, which is the obvious way to do this
+   * and the wrong one — a tiled `feTurbulence` seams visibly at the tile
+   * edges whatever `stitchTiles` claims, and a page-sized checkerboard is a
+   * worse artefact than no texture at all. A repeating gradient is continuous
+   * by construction and costs the compositor nothing.
+   *
+   * The grid is on the ground only. It would have to start again at the
+   * corner of every panel laid on it, and a grid that does not line up with
+   * the grid beside it is worse than none.
+   */
+  --mesh:
+    repeating-linear-gradient(90deg, transparent 0 47px, oklch(0.3 0.03 262 / 0.05) 47px 48px),
+    repeating-linear-gradient(0deg, transparent 0 47px, oklch(0.3 0.03 262 / 0.05) 47px 48px);
+  /* Mill grain: the fine directional tooth rolled plate keeps. Small enough
+     to tile invisibly, so panels can wear it too. */
+  --tooth: repeating-linear-gradient(101deg, transparent 0 3px, oklch(0.3 0.03 262 / 0.018) 3px 4px);
+  /* Raking light across the floor, from a bay window and a lamp. */
+  --raking:
+    linear-gradient(197deg, oklch(1 0 0 / 0.6) 0 34%, transparent 62%),
+    radial-gradient(56rem 38rem at 92% -10%, oklch(0.62 0.1 var(--tint-hue) / 0.16), transparent 62%),
+    radial-gradient(46rem 34rem at 2% 112%, oklch(0.5 0.05 258 / 0.12), transparent 60%);
+
+  /* The scribed line down a bound edge, and the shadow a panel casts. */
+  --rule: oklch(0.45 0.09 var(--tint-hue) / 0.4);
+  --cast: oklch(0.2 0.02 262 / 0.1);
+  /* What a modal lays over the page. */
+  --scrim: oklch(0.17 0.015 262 / 0.5);
+}
+
+.dark {
+  /* Night shift: the concrete is gone, the steel is what is left. */
+  --background: oklch(0.175 0.008 262);
+  --foreground: oklch(0.93 0.006 258);
+  --card: oklch(0.219 0.009 262);
+  --card-foreground: oklch(0.93 0.006 258);
+  --popover: oklch(0.229 0.009 262);
+  --popover-foreground: oklch(0.93 0.006 258);
+  --secondary: oklch(0.277 0.01 262);
+  --secondary-foreground: oklch(0.93 0.006 258);
+  --muted: oklch(0.277 0.01 262);
+  --muted-foreground: oklch(0.715 0.012 260);
+  --destructive: oklch(0.66 0.19 27);
+  --border: oklch(0.88 0.02 258 / 13%);
+  --input: oklch(0.88 0.02 258 / 17%);
+
+  --signal: oklch(0.76 0.15 155);
+  --hazard: oklch(0.8 0.14 84);
+  --alert: oklch(0.76 0.16 50);
+  --flare: oklch(0.77 0.135 27);
+
+  --chart-1: oklch(0.745 0.125 255);
+  --chart-2: oklch(0.8 0.14 84);
+  --chart-3: oklch(0.76 0.16 50);
+  --chart-4: oklch(0.74 0.11 210);
+  --chart-5: oklch(0.76 0.15 155);
+
+  --sidebar: oklch(0.147 0.008 262);
+  --sidebar-foreground: oklch(0.9 0.006 258);
+  --sidebar-border: oklch(0.88 0.02 258 / 11%);
+
+  --mesh:
+    repeating-linear-gradient(90deg, transparent 0 47px, oklch(0.85 0.03 258 / 0.038) 47px 48px),
+    repeating-linear-gradient(0deg, transparent 0 47px, oklch(0.85 0.03 258 / 0.038) 47px 48px);
+  --tooth: repeating-linear-gradient(101deg, transparent 0 3px, oklch(0.9 0.02 258 / 0.014) 3px 4px);
+  --raking:
+    linear-gradient(197deg, oklch(0.9 0.02 258 / 0.05) 0 34%, transparent 62%),
+    radial-gradient(56rem 38rem at 92% -10%, oklch(0.55 0.09 var(--tint-hue) / 0.16), transparent 62%),
+    radial-gradient(46rem 34rem at 2% 112%, oklch(0.45 0.04 258 / 0.22), transparent 60%);
+
+  --rule: oklch(0.75 0.11 var(--tint-hue) / 0.34);
+  --cast: oklch(0 0 0 / 0.45);
+  --scrim: oklch(0.08 0.01 262 / 0.66);
+}
+
+/* ------------------------------- the accent ------------------------------- */
+
+/*
+ * Seven signal colours, of which one is worn at a time.
+ *
+ * An accent is *two numbers*: a hue, and a trim on the chroma. Everything
+ * tinted — primary, the focus ring, the sidebar's live colours — is derived
+ * from those below rather than written out seven times, so the seven cannot
+ * drift apart and adding an eighth is one line here and a name in
+ * `src/lib/preferences.ts`.
+ *
+ * The trim is not decoration: at equal chroma a yellow reads pale and a blue
+ * reads loud, so hazard is given a little more and slate a little less to
+ * keep the seven at the same weight. Lightness never moves, which is what
+ * keeps text on a primary button readable in all seven.
+ *
+ * What does *not* follow the accent: the signal tones. Signal green still
+ * means paid and alert orange still means overdue — see `--signal` above —
+ * because a state told by colour alone would start lying the moment somebody
+ * chose that colour.
+ */
+
+:root {
+  --tint-hue: 258;
+  --tint-chroma: 1;
+}
+
+/* Painted steel. */
+[data-accent="cobalt"] {
+  --tint-hue: 258;
+  --tint-chroma: 1;
+}
+[data-accent="arc"] {
+  --tint-hue: 214;
+  --tint-chroma: 0.95;
+}
+[data-accent="slate"] {
+  --tint-hue: 245;
+  --tint-chroma: 0.55;
+}
+/* Signage. */
+[data-accent="signal"] {
+  --tint-hue: 152;
+  --tint-chroma: 0.92;
+}
+[data-accent="hazard"] {
+  --tint-hue: 82;
+  --tint-chroma: 1.15;
+}
+[data-accent="ember"] {
+  --tint-hue: 45;
+  --tint-chroma: 1.08;
+}
+[data-accent="plasma"] {
+  --tint-hue: 310;
+  --tint-chroma: 0.88;
+}
+
+/*
+ * The tinted half of the palette — declared wherever an accent is *named*,
+ * not only on the page root.
+ *
+ * A custom property that uses `var()` is substituted where it is declared, so
+ * an element that sets its own `--tint-hue` inherits the root's already
+ * resolved `--primary` and would paint in the wrong colour. Redeclaring here
+ * is what lets a swatch in the settings panel carry `data-accent` and paint
+ * itself in that accent, out of this stylesheet, rather than out of a second
+ * list of colours in the TypeScript that can disagree with this one.
+ */
+:root,
+[data-accent] {
+  --primary: oklch(0.49 calc(0.145 * var(--tint-chroma)) var(--tint-hue));
+  --primary-foreground: oklch(0.985 0.004 258);
+  --accent: oklch(0.905 calc(0.05 * var(--tint-chroma)) var(--tint-hue));
+  --accent-foreground: oklch(0.3 calc(0.08 * var(--tint-chroma)) var(--tint-hue));
+  --ring: oklch(0.56 calc(0.14 * var(--tint-chroma)) var(--tint-hue));
+
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.898 calc(0.05 * var(--tint-chroma)) var(--tint-hue));
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-ring: var(--ring);
+}
+
+/* The same seven on the night shift: lighter, so they carry on dark steel.
+   The descendant and the compound selector are both needed — the page root
+   wears the class and the attribute together, a swatch wears only the
+   attribute. */
+.dark,
+.dark [data-accent],
+.dark[data-accent] {
+  --primary: oklch(0.73 calc(0.15 * var(--tint-chroma)) var(--tint-hue));
+  --primary-foreground: oklch(0.18 0.02 var(--tint-hue));
+  --accent: oklch(0.32 calc(0.05 * var(--tint-chroma)) var(--tint-hue));
+  --accent-foreground: oklch(0.93 calc(0.06 * var(--tint-chroma)) var(--tint-hue));
+  --ring: oklch(0.63 calc(0.13 * var(--tint-chroma)) var(--tint-hue));
+
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.3 calc(0.048 * var(--tint-chroma)) var(--tint-hue));
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-ring: var(--ring);
+}
+
+/* -------------------------------- the face -------------------------------- */
+
+/*
+ * What the app is read in.
+ *
+ * System stacks only, for the reason `--font-display` is one: a webfont is a
+ * network dependency on a tool that runs locally, and the first paint would
+ * be in the fallback anyway. `--font-sans` is what Tailwind's `font-sans` and
+ * the body resolve, so naming a face on <html> re-sets the whole app — and
+ * naming it on a single element previews that face in place, which is how the
+ * picker shows each option in its own letters.
+ *
+ * Headings keep `--font-display` throughout. The wordmark and the totals are
+ * this app's rating plate, and a rating plate is stencilled, not written.
+ */
+
+[data-font="sans"] {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+}
+[data-font="grotesque"] {
+  --font-sans: "Helvetica Neue", Helvetica, Inter, "Liberation Sans", Arial, sans-serif;
+}
+[data-font="humanist"] {
+  --font-sans: Optima, Candara, "Gill Sans", "Gill Sans MT", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+[data-font="oldstyle"] {
+  --font-sans: var(--font-serif);
+}
+[data-font="transitional"] {
+  --font-sans: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, ui-serif, serif;
+}
+[data-font="mono"] {
+  --font-sans: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ------------------------------- movement --------------------------------- */
+
+/*
+ * Motion here is a machine's: things are driven into place along an axis and
+ * stop dead. Nothing spins, nothing bounces, and the only thing that repeats
+ * is the one lamp that means somebody is waiting on you.
+ */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes extend {
+  from {
+    opacity: 0;
+    transform: translateY(0.6rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(-0.3rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The active-page marker, run down its length like a weld bead. */
+@keyframes weld {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+/* The mark, nudged off square when it is pointed at. */
+@keyframes tilt {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+
+/* The sign-in screen's light, moving the way it does through a roof bay. */
+@keyframes drift {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(2%, 2%, 0) scale(1.06);
+  }
+}
+
+/* Something waiting on a person: a warning lamp, not a blink. */
+@keyframes throb {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.68;
+    transform: scale(0.93);
+  }
+}
+
+/* -------------------------------- surfaces -------------------------------- */
+
+/** The floor itself: grain over the drafting grid over the raking light. */
+@utility slab {
+  background-color: var(--background);
+  background-image: var(--tooth), var(--mesh), var(--raking);
+}
+
+/** A plate laid on the floor — a card, a form panel, a menu. */
+@utility panel {
+  background-color: var(--card);
+  background-image: var(--tooth);
+}
+
+/**
+ * The scribed line down a mounting edge, the way a rack has one.
+ *
+ * Drawn as a pseudo-element rather than a border so it can stop short of both
+ * ends, costs nothing in the markup, and cannot be scrolled away from what it
+ * belongs to.
+ */
+@utility rail {
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0.5rem;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, var(--rule) 12%, var(--rule) 88%, transparent);
+    pointer-events: none;
+  }
+}
+
+/** The hairline a panel seam leaves under a heading. */
+@utility seam {
+  box-shadow: 0 1px 0 var(--card), 0 2px 0 color-mix(in oklab, var(--border) 70%, transparent);
+}
+
+/** Anything that should lift slightly when it is pointed at. */
+@utility liftable {
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 0.18s cubic-bezier(0.2, 0, 0, 1),
+    border-color 0.18s ease;
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px -10px color-mix(in oklab, var(--cast) 90%, transparent);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* A rating plate is stencilled: narrow, tight, and squared up. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.012em;
+  }
+
+  /* Money and quantities line up in a column or they are not numbers. */
+  :where(td, th) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--ring) 30%, transparent);
+  }
+}
+
+/* ---------------------------- the public website --------------------------- */
+
+/*
+ * What a visitor sees before signing in (components/site/Website.tsx) is the
+ * contractor's own site, not this tool, so it wears the contractor's brand:
+ * warm paper, taupe ink, a serif display face. Everything is redefined on
+ * `.site` itself rather than on :root, so none of it reaches the app — and
+ * the app's dark mode, which sits on <html>, does not reach in either: every
+ * token the page uses is set again here, in light.
+ *
+ * The faces are webfonts, unlike the app's: a public marketing page is read
+ * online by definition, and the brand is set in them. Website.tsx adds the
+ * stylesheet link only when the page is shown.
+ */
+.site {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.004 85);
+  --foreground: oklch(0.22 0.012 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.012 60);
+  --primary: oklch(0.3 0.025 55);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.95 0.012 80);
+  --secondary-foreground: oklch(0.25 0.02 55);
+  --muted: oklch(0.95 0.012 80);
+  --muted-foreground: oklch(0.44 0.015 60);
+  --accent: oklch(0.93 0.02 75);
+  --accent-foreground: oklch(0.25 0.02 55);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.88 0.012 75);
+  --input: oklch(0.8 0.015 70);
+  --ring: oklch(0.55 0.05 65);
+  /* The original site's taupe (#9A8A78), darkened to clear AA as text. */
+  --brand: oklch(0.47 0.035 65);
+  --brand-light: oklch(0.63 0.03 70);
+  --font-sans: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Playfair Display", ui-serif, Georgia, serif;
+  --font-serif: var(--font-display);
+
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  line-height: 1.625;
+}
+
+/* A larger base size, for the readers a remodeler's site actually has. Only
+   while the site is on screen — the app keeps its own density. */
+html:has(.site) {
+  font-size: 112.5%;
+  scroll-behavior: smooth;
+}
+
+.site :where(h1, h2, h3) {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.site :where(p) {
+  text-wrap: pretty;
+}
+
+.site :focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/*
+ * Anyone who has asked for less movement gets none of it — including the
+ * infinite ones, which are the animations that actually wear on people.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::after,
+  *::before {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
