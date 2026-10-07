@@ -16,6 +16,7 @@ const MODULES = [
   "share/routes.js",
   "keys/routes.js",
   "telegram/routes.js",
+  "booking/routes.js",
 ];
 
 MODULES.forEach(path => {

@@ -300,27 +300,32 @@ export async function setContactRequestStatus(
 export const deleteContactRequest = (token: string, id: string) => remove(token, "contact_requests", id);
 
 /**
- * A modest brake on the contact form: a few requests per sender per window,
- * held in memory. The honeypot stops the bots that fill every field; this
- * stops one that has learned not to from filling the inbox. Best effort by
- * nature — behind a proxy the sender is whatever the proxy says it is.
+ * A modest brake on the public forms: a few submissions per sender per
+ * window, held in memory. The honeypot stops the bots that fill every field;
+ * this stops one that has learned not to from filling the inbox. Best effort
+ * by nature — behind a proxy the sender is whatever the proxy says it is.
+ *
+ * Each form gets its own limiter, so somebody who has just sent an enquiry
+ * can still book a visit.
  */
-const CONTACT_WINDOW_MS = 15 * 60 * 1000;
-const CONTACT_LIMIT = 5;
-const contactLog = new Map<string, number[]>();
+export function rateLimiter(limit: number, windowMs: number) {
+  const log = new Map<string, number[]>();
 
-export function contactAllowed(sender: string, now = Date.now()): boolean {
-  const recent = (contactLog.get(sender) ?? []).filter(at => now - at < CONTACT_WINDOW_MS);
-  if (recent.length >= CONTACT_LIMIT) {
-    contactLog.set(sender, recent);
-    return false;
-  }
-  recent.push(now);
-  contactLog.set(sender, recent);
+  return (sender: string, now = Date.now()): boolean => {
+    const recent = (log.get(sender) ?? []).filter(at => now - at < windowMs);
+    if (recent.length >= limit) {
+      log.set(sender, recent);
+      return false;
+    }
+    recent.push(now);
+    log.set(sender, recent);
 
-  // Forget senders who have gone quiet, so the map cannot grow without end.
-  if (contactLog.size > 10_000) {
-    for (const [key, times] of contactLog) if (times.every(at => now - at >= CONTACT_WINDOW_MS)) contactLog.delete(key);
-  }
-  return true;
+    // Forget senders who have gone quiet, so the map cannot grow without end.
+    if (log.size > 10_000) {
+      for (const [key, times] of log) if (times.every(at => now - at >= windowMs)) log.delete(key);
+    }
+    return true;
+  };
 }
+
+export const contactAllowed = rateLimiter(5, 15 * 60 * 1000);

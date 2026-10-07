@@ -119,6 +119,15 @@ import {
   updateSiteText,
 } from "./server/site";
 import { CONTACT_REQUEST_STATUSES, type ContactRequestStatus } from "./lib/site";
+import {
+  bookAppointment,
+  bookingAllowed,
+  bookingAvailability,
+  deleteAppointment,
+  listAppointments,
+  saveBookingSettings,
+  setAppointmentState,
+} from "./server/booking";
 import { createApiKey, deleteApiKey, listApiKeys, readKeyInput } from "./server/apiKeys";
 import { buildOpenApiDocument, endpointIndex, OPENAPI_PATH } from "./server/openapi";
 import { API_KEY_HEADER, API_KEY_PREFIX, isApiKey, requireSessionToken, requireToken } from "./server/session";
@@ -214,6 +223,9 @@ import {
   readProposalTemplate,
   readQuoteHeader,
   readQuoteLines,
+  readAppointmentState,
+  readBookingRequest,
+  readBookingSettings,
   readContactRequest,
   readSiteImageMeta,
   readSiteText,
@@ -1782,6 +1794,50 @@ const server = serve({
       }),
       DELETE: editor<{ params: { id: string } }>(async (token, req) =>
         (await deleteContactRequest(token, req.params.id)) ? Response.json({ ok: true }) : fail("Request not found.", 404),
+      ),
+    },
+
+    /* ------------------------------- booking ------------------------------ */
+
+    /**
+     * The public calendar: the booking settings and every free slot. No
+     * credential, and no names — only the times somebody else has taken.
+     */
+    "/api/site/booking": {
+      GET: handler(async () => Response.json(await bookingAvailability(), { headers: { "Cache-Control": "no-store" } })),
+      /**
+       * A visitor books a visit. The honeypot and the per-sender limit stand in
+       * front, as on the contact form; PocketBase refuses a time already taken.
+       */
+      POST: (req: Request, server: { requestIP(req: Request): { address: string } | null }) =>
+        handler(async () => {
+          const input = must(readBookingRequest(await readJson(req)));
+          const sender = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || server.requestIP(req)?.address || "";
+          if (!bookingAllowed(sender)) {
+            return fail("That is a lot of bookings in a short time — please give us a call instead.", 429);
+          }
+          const { spam, ...request } = input;
+          // A bot is shown a booking that was never made, so it learns nothing.
+          if (spam) return Response.json({ id: "apt_received", start: request.start, end: request.start }, { status: 201 });
+          return Response.json(await bookAppointment(request), { status: 201 });
+        })(req),
+    },
+
+    "/api/site/booking/settings": {
+      PUT: editor(async (token, req) => Response.json(await saveBookingSettings(token, must(readBookingSettings(await body(req)))))),
+    },
+
+    "/api/site/appointments": {
+      GET: editor(async token => Response.json(await listAppointments(token))),
+    },
+
+    "/api/site/appointments/:id": {
+      PUT: editor<{ params: { id: string } }>(async (token, req) => {
+        const updated = await setAppointmentState(token, req.params.id, must(readAppointmentState(await body(req))));
+        return updated ? Response.json(updated) : fail("Appointment not found.", 404);
+      }),
+      DELETE: editor<{ params: { id: string } }>(async (token, req) =>
+        (await deleteAppointment(token, req.params.id)) ? Response.json({ ok: true }) : fail("Appointment not found.", 404),
       ),
     },
 

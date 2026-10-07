@@ -2204,3 +2204,135 @@ describe("the public website", () => {
     expect((await api(`/api/site/images/${image.id}`, { method: "DELETE" })).status).toBe(200);
   });
 });
+
+/* --------------------------------- booking -------------------------------- */
+
+describe("booking a visit", () => {
+  const visitor = (path: string, init: RequestInit = {}, from = "203.0.113.30") =>
+    fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), "X-Forwarded-For": from },
+    });
+
+  const visit = { firstName: "Ada", lastName: "Visitor", email: "ada@example.com", phone: "555-0101", address: "1 Elm St" };
+
+  const book = (start: string, from: string, extra: Record<string, unknown> = {}) =>
+    visitor("/api/site/booking", { method: "POST", body: JSON.stringify({ ...visit, start, ...extra }) }, from);
+
+  const calendar = async () => (await (await visitor("/api/site/booking")).json()) as any;
+  const offered = (page: any): string[] => page.days.flatMap((day: any) => day.slots.map((slot: any) => slot.start));
+
+  /** Every day, eight to six, on UTC, so the test does not care what time it runs. */
+  const OPEN = {
+    enabled: true,
+    timezone: "UTC",
+    noticeHours: 0,
+    durationMinutes: 60,
+    bufferMinutes: 30,
+    horizonDays: 14,
+    hours: Array.from({ length: 7 }, () => ({ open: true, start: "08:00", end: "18:00" })),
+  };
+
+  signedIn("is switched off on a fresh instance, and offers nothing", async () => {
+    const page = await calendar();
+    expect(page.settings.enabled).toBe(false);
+    expect(page.days).toEqual([]);
+    const refused = await book(new Date(Date.now() + 3 * 86_400_000).toISOString(), "203.0.113.31");
+    expect(refused.status).toBe(409);
+  });
+
+  signedIn("only an editor sets the hours, and a wrong zone is refused", async () => {
+    expect((await api("/api/site/booking/settings", { method: "PUT", body: JSON.stringify(OPEN), cookie: bobCookie })).status).toBe(403);
+    const bad = await api("/api/site/booking/settings", { method: "PUT", body: JSON.stringify({ ...OPEN, timezone: "Mars/Olympus" }) });
+    expect(bad.status).toBe(400);
+
+    const saved = await put("/api/site/booking/settings", OPEN);
+    expect(saved).toMatchObject({ enabled: true, timezone: "UTC", bufferMinutes: 30 });
+    expect(saved.hours).toHaveLength(7);
+    expect((await calendar()).days.length).toBeGreaterThan(10);
+  });
+
+  signedIn("a visitor books a free slot, and it is gone from the calendar without saying who took it", async () => {
+    const before = await calendar();
+    const slot = before.days.at(-1).slots[0];
+
+    const booked = await book(slot.start, "203.0.113.32");
+    expect(booked.status).toBe(201);
+    expect(await booked.json()).toMatchObject({ start: slot.start, end: slot.end });
+
+    const after = await calendar();
+    expect(offered(after)).not.toContain(slot.start);
+    expect(JSON.stringify(after)).not.toContain("ada@example.com");
+
+    const again = await book(slot.start, "203.0.113.33");
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: string }).error).toMatch(/just booked/);
+  });
+
+  signedIn("two visitors racing for one slot get one booking between them", async () => {
+    const slot = (await calendar()).days.at(-2).slots[3];
+    const statuses = await Promise.all(
+      [40, 41, 42, 43, 44].map(n => book(slot.start, `203.0.113.${n}`, { email: `racer${n}@example.com` }).then(r => r.status)),
+    );
+    expect(statuses.sort()).toEqual([201, 409, 409, 409, 409]);
+  });
+
+  signedIn("a time the calendar does not offer is refused with a sentence", async () => {
+    const day = (await calendar()).days.at(-3);
+    const offGrid = new Date(Date.parse(day.slots[0].start) + 15 * 60_000).toISOString();
+    const refused = await book(offGrid, "203.0.113.50");
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/not one we can offer/);
+
+    const incomplete = await book(day.slots[0].start, "203.0.113.50", { phone: "" });
+    expect(incomplete.status).toBe(400);
+  });
+
+  signedIn("a bot is shown a booking and nothing is kept", async () => {
+    const slot = (await calendar()).days.at(-4).slots[0];
+    const bot = await book(slot.start, "203.0.113.51", { website: "http://spam.example", email: "bot@example.com" });
+    expect(bot.status).toBe(201);
+    expect(offered(await calendar())).toContain(slot.start);
+  });
+
+  signedIn("only an editor reads who booked, and cancelling frees the slot", async () => {
+    expect((await visitor("/api/site/appointments")).status).toBe(401);
+    expect((await api("/api/site/appointments", { cookie: bobCookie })).status).toBe(403);
+
+    const appointments = (await json("/api/site/appointments")) as any[];
+    const ada = appointments.find(entry => entry.email === "ada@example.com");
+    expect(ada).toMatchObject({ firstName: "Ada", phone: "555-0101", address: "1 Elm St", state: "booked" });
+    expect(appointments.some(entry => entry.email === "bot@example.com")).toBe(false);
+
+    const cancelled = await put(`/api/site/appointments/${ada.id}`, { state: "cancelled" });
+    expect(cancelled.state).toBe("cancelled");
+    expect(offered(await calendar())).toContain(ada.start);
+
+    expect((await api(`/api/site/appointments/${ada.id}`, { method: "PUT", body: JSON.stringify({ state: "lost" }) })).status).toBe(400);
+  });
+
+  signedIn("PocketBase itself lets nobody around the booking hook", async () => {
+    // Straight at the records API, anonymously and as an editor: no create rule at all.
+    const direct = await fetch(`${pocketbase.url}/api/collections/appointments/records`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...visit, start: "2030-01-01 10:00:00.000Z", end: "2030-01-01 11:00:00.000Z" }),
+    });
+    expect(direct.status).toBeGreaterThanOrEqual(400);
+    expect((await fetch(`${pocketbase.url}/api/collections/appointments/records`)).status).toBe(200);
+    const list = (await (await fetch(`${pocketbase.url}/api/collections/appointments/records`)).json()) as any;
+    expect(list.items).toEqual([]);
+
+    // The busy times are bare intervals.
+    const from = new Date().toISOString();
+    const to = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const busy = (await (await fetch(`${pocketbase.url}/api/build/booking/busy?from=${from}&to=${to}`)).json()) as any;
+    expect(busy.busy.length).toBeGreaterThan(0);
+    for (const entry of busy.busy) expect(Object.keys(entry).sort()).toEqual(["end", "start"]);
+  });
+
+  signedIn("switching it off again empties the calendar", async () => {
+    await put("/api/site/booking/settings", { ...OPEN, enabled: false });
+    expect((await calendar()).days).toEqual([]);
+  });
+});

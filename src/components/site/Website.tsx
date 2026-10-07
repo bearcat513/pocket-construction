@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import type { BookingAvailability } from "@/lib/booking";
 import { inlineSpans } from "@/lib/markdown";
 import {
   CONTACT_HONEYPOT,
@@ -27,20 +28,8 @@ import {
   type SitePage,
 } from "@/lib/site";
 import { cn } from "@/lib/utils";
-
-const FONTS_HREF =
-  "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Source+Sans+3:wght@400;600;700&display=swap";
-
-/** The brand's faces, linked once and only when the site is shown. */
-function useSiteFonts() {
-  useEffect(() => {
-    if (document.querySelector(`link[href="${FONTS_HREF}"]`)) return;
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = FONTS_HREF;
-    document.head.append(link);
-  }, []);
-}
+import { BookingWidget } from "./Booking";
+import { fieldClass, solidButton, useSiteFonts } from "./parts";
 
 /**
  * The public website — what a visitor who has not signed in sees.
@@ -59,13 +48,22 @@ export function Website({ signInLabel, onSignIn }: { signInLabel: string; onSign
   useSiteFonts();
   const [page, setPage] = useState<SitePage | null>(null);
   const [failed, setFailed] = useState(false);
+  // Null until loaded, and stays null if it cannot be: the page is still
+  // worth showing without its calendar.
+  const [booking, setBooking] = useState<BookingAvailability | null>(null);
 
   useEffect(() => {
     void api
       .sitePage()
       .then(setPage)
       .catch(() => setFailed(true));
+    void api
+      .bookingAvailability()
+      .then(setBooking)
+      .catch(() => setBooking(null));
   }, []);
+
+  const bookable = Boolean(booking?.settings.enabled);
 
   const brand = page ? pageText(page, "brand.name") : undefined;
 
@@ -97,15 +95,16 @@ export function Website({ signInLabel, onSignIn }: { signInLabel: string; onSign
       >
         Skip to content
       </a>
-      <SiteHeader page={page} signInLabel={signInLabel} onSignIn={onSignIn} />
+      <SiteHeader page={page} bookable={bookable} signInLabel={signInLabel} onSignIn={onSignIn} />
       <main id="main" className="flex-1">
-        <Hero page={page} />
+        <Hero page={page} bookable={bookable} />
         <About page={page} />
         <Services page={page} />
         <Projects page={page} />
+        {booking && bookable && <Book page={page} availability={booking} />}
         <Contact page={page} />
       </main>
-      <SiteFooter page={page} signInLabel={signInLabel} onSignIn={onSignIn} />
+      <SiteFooter page={page} bookable={bookable} signInLabel={signInLabel} onSignIn={onSignIn} />
     </div>
   );
 }
@@ -128,11 +127,12 @@ function Prose({ text, className }: { text: string; className?: string }) {
 }
 
 /** The sections a page actually has, for the nav — an emptied one drops out. */
-function sectionsOf(page: SitePage) {
+function sectionsOf(page: SitePage, bookable: boolean) {
   return [
     { id: "about", label: "About", shown: Boolean(pageText(page, "about.text")) },
     { id: "services", label: "Services", shown: pageTexts(page, "services.list").length > 0 },
     { id: "projects", label: "Projects", shown: pageImages(page, "projects.gallery").length > 0 },
+    { id: "book", label: "Book a visit", shown: bookable },
     { id: "contact", label: "Contact", shown: true },
   ].filter(section => section.shown);
 }
@@ -162,17 +162,24 @@ function SignInLink({ label, onClick, className }: { label: string; onClick: () 
   );
 }
 
-const solidButton =
-  "inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 font-semibold text-primary-foreground transition-colors hover:bg-primary/90";
-
 /* --------------------------------- header -------------------------------- */
 
-function SiteHeader({ page, signInLabel, onSignIn }: { page: SitePage; signInLabel: string; onSignIn: () => void }) {
+function SiteHeader({
+  page,
+  bookable,
+  signInLabel,
+  onSignIn,
+}: {
+  page: SitePage;
+  bookable: boolean;
+  signInLabel: string;
+  onSignIn: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const brand = pageText(page, "brand.name");
   const logo = pageImage(page, "brand.logo");
   const { phone, phoneHref: tel } = contactDetails(page);
-  const sections = sectionsOf(page);
+  const sections = sectionsOf(page, bookable);
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85">
@@ -251,7 +258,7 @@ function SiteHeader({ page, signInLabel, onSignIn }: { page: SitePage; signInLab
 
 /* ---------------------------------- hero --------------------------------- */
 
-function Hero({ page }: { page: SitePage }) {
+function Hero({ page, bookable }: { page: SitePage; bookable: boolean }) {
   const hero = pageText(page, "hero.text");
   const image = pageImage(page, "hero.image");
   const { phone, phoneHref: tel, location } = contactDetails(page);
@@ -276,10 +283,10 @@ function Hero({ page }: { page: SitePage }) {
         {hero?.body && <Prose text={hero.body} className="mt-4 max-w-xl text-xl text-white/90 sm:text-2xl" />}
         <div className="mt-10 flex flex-wrap gap-4">
           <a
-            href="#contact"
+            href={bookable ? "#book" : "#contact"}
             className="inline-flex h-12 items-center gap-2 rounded-md bg-white px-6 text-base font-semibold text-primary hover:bg-white/90"
           >
-            Request an estimate <ArrowRight className="size-4" aria-hidden />
+            {bookable ? "Book a visit" : "Request an estimate"} <ArrowRight className="size-4" aria-hidden />
           </a>
           {tel && (
             <a
@@ -515,12 +522,38 @@ function Lightbox({
   );
 }
 
+/* --------------------------------- booking ------------------------------- */
+
+/**
+ * The booking calendar, on the page. Its words are the booking settings'
+ * rather than a slot's, because the same title heads the calendar wherever
+ * it is embedded.
+ */
+function Book({ page, availability }: { page: SitePage; availability: BookingAvailability }) {
+  const { settings } = availability;
+  const { phone } = contactDetails(page);
+
+  return (
+    <section id="book" aria-labelledby="book-heading" className="scroll-mt-20 border-t">
+      <div className="mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:px-6 md:py-24 lg:grid-cols-[1fr_1.6fr]">
+        <div>
+          <h2 id="book-heading" className="text-3xl font-bold sm:text-4xl">
+            {settings.title}
+          </h2>
+          {settings.description && <Prose text={settings.description} className="mt-4 max-w-prose text-xl text-muted-foreground" />}
+        </div>
+        {/* min-w-0: the day strip scrolls inside the card rather than widening it. */}
+        <div className="min-w-0 rounded-xl border bg-card p-6 shadow-sm sm:p-8">
+          <BookingWidget availability={availability} phone={phone} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* --------------------------------- contact ------------------------------- */
 
 type Status = { kind: "idle" } | { kind: "sending" } | { kind: "sent" } | { kind: "error"; message: string };
-
-const fieldClass =
-  "h-12 w-full rounded-md border border-input bg-card px-3 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40";
 
 function Contact({ page }: { page: SitePage }) {
   const intro = pageText(page, "contact.text");
@@ -681,10 +714,20 @@ function TextField({ id, label, required, ...props }: { id: string; label: strin
 
 /* --------------------------------- footer -------------------------------- */
 
-function SiteFooter({ page, signInLabel, onSignIn }: { page: SitePage; signInLabel: string; onSignIn: () => void }) {
+function SiteFooter({
+  page,
+  bookable,
+  signInLabel,
+  onSignIn,
+}: {
+  page: SitePage;
+  bookable: boolean;
+  signInLabel: string;
+  onSignIn: () => void;
+}) {
   const brand = pageText(page, "brand.name");
   const { location } = contactDetails(page);
-  const sections = sectionsOf(page);
+  const sections = sectionsOf(page, bookable);
 
   return (
     <footer className="bg-primary text-primary-foreground">

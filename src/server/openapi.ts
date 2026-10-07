@@ -66,6 +66,12 @@ import {
   SITE_IMAGE_WIDTHS,
   SITE_SLOTS,
 } from "../lib/site";
+import {
+  APPOINTMENT_STATES,
+  BOOKING_HONEYPOT,
+  BOOKING_LIMITS,
+  MAX_BOOKING_NOTES,
+} from "../lib/booking";
 
 type Json = Record<string, unknown>;
 
@@ -1793,6 +1799,91 @@ export const OPERATIONS: Operation[] = [
       "404": responseRef("NotFound"),
     },
   },
+
+  /* ------------------------------- booking ------------------------------ */
+  {
+    method: "get",
+    path: "/api/site/booking",
+    tag: "Booking",
+    operationId: "getBookingAvailability",
+    summary: "The booking settings, and every slot still free",
+    description:
+      "What the public calendar draws. Days with nothing free are left out, and so is everything while " +
+      "booking is switched off. Times other people have booked are absent, never named.",
+    anonymous: true,
+    responses: { "200": jsonResponse("The calendar.", ref("BookingAvailability")) },
+  },
+  {
+    method: "post",
+    path: "/api/site/booking",
+    tag: "Booking",
+    operationId: "bookAppointment",
+    summary: "{ start, firstName, lastName, email, phone, address?, notes? } → book a visit",
+    description:
+      "No credential: the visitor has no account. `start` must be one of the slots `GET /api/site/booking` " +
+      "offers; the end is the server's to work out. 409 when somebody has taken it in the meantime, or " +
+      `booking is off. A few per sender in fifteen minutes, then 429; the hidden \`${BOOKING_HONEYPOT}\` field ` +
+      "is treated as on the contact form.",
+    anonymous: true,
+    requestBody: jsonBody("The visit.", ref("BookingRequest")),
+    responses: {
+      "201": jsonResponse("Booked.", ref("BookingConfirmation")),
+      "409": jsonResponse("Taken, or booking is off.", ref("Error")),
+      "429": jsonResponse("Too many from one sender, too quickly.", ref("Error")),
+    },
+  },
+  {
+    method: "put",
+    path: "/api/site/booking/settings",
+    tag: "Booking",
+    operationId: "saveBookingSettings",
+    summary: "When visits may be booked: hours, length, buffer, notice, closed days (editors only)",
+    description: "A field left out keeps its default; one that is there and wrong is refused.",
+    requestBody: jsonBody("The settings.", ref("BookingSettings")),
+    responses: {
+      "200": jsonResponse("Saved.", ref("BookingSettings")),
+      "403": jsonResponse("Not a website editor.", ref("Error")),
+    },
+  },
+  {
+    method: "get",
+    path: "/api/site/appointments",
+    tag: "Booking",
+    operationId: "listAppointments",
+    summary: "Every booked visit, soonest first (editors only)",
+    responses: {
+      "200": jsonResponse("The visits.", array(ref("Appointment"))),
+      "403": jsonResponse("Not a website editor.", ref("Error")),
+    },
+  },
+  {
+    method: "put",
+    path: "/api/site/appointments/{id}",
+    tag: "Booking",
+    operationId: "setAppointmentState",
+    summary: "{ state } → mark a visit completed, cancelled, a no-show, or booked again",
+    description: "Cancelling frees the slot on the public calendar.",
+    parameters: [idParam("appointment")],
+    requestBody: jsonBody("The new state.", ref("AppointmentStateInput")),
+    responses: {
+      "200": jsonResponse("Saved.", ref("Appointment")),
+      "403": jsonResponse("Not a website editor.", ref("Error")),
+      "404": responseRef("NotFound"),
+    },
+  },
+  {
+    method: "delete",
+    path: "/api/site/appointments/{id}",
+    tag: "Booking",
+    operationId: "deleteAppointment",
+    summary: "Delete a visit",
+    parameters: [idParam("appointment")],
+    responses: {
+      "200": jsonResponse("Deleted.", ref("Ok")),
+      "403": jsonResponse("Not a website editor.", ref("Error")),
+      "404": responseRef("NotFound"),
+    },
+  },
 ];
 
 /* --------------------------------- schemas -------------------------------- */
@@ -2086,6 +2177,74 @@ function schemas(): Record<string, Json> {
       description: string_("What they wrote."),
       status: enum_(CONTACT_REQUEST_STATUSES, "Where it stands."),
       createdAt: timestamp("When it arrived."),
+      updatedAt: timestamp("Last changed."),
+    }),
+
+    DayHours: object("One day's opening hours, on the business's clock.", {
+      open: boolean_("Whether visits are taken that day."),
+      start: string_("Opening time.", { pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", example: "09:00" }),
+      end: string_("Closing time. A visit must end by it.", { pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", example: "17:00" }),
+    }),
+    BookingSettings: object("When visits may be booked.", {
+      enabled: boolean_("Off by default; nothing is offered until it is on."),
+      title: string_("What the visitor is booking.", { maxLength: BOOKING_LIMITS.title }),
+      description: string_("A sentence or two above the calendar.", { maxLength: BOOKING_LIMITS.description }),
+      timezone: string_("The IANA zone the hours are in.", { example: "America/New_York" }),
+      durationMinutes: integer_("How long a visit is.", BOOKING_LIMITS.durationMinutes),
+      bufferMinutes: integer_("Kept free after each visit, and before the next.", BOOKING_LIMITS.bufferMinutes),
+      noticeHours: integer_("How far ahead a visit must be booked.", BOOKING_LIMITS.noticeHours),
+      horizonDays: integer_("How far ahead the calendar reaches.", BOOKING_LIMITS.horizonDays),
+      hours: { ...array(ref("DayHours")), minItems: 7, maxItems: 7, description: "Seven days, Sunday first." },
+      closedDates: { ...array(date_("A day with no visits.")), maxItems: BOOKING_LIMITS.closedDates },
+    }),
+    BookingSlot: object("One free time.", {
+      start: timestamp("When it starts."),
+      end: timestamp("When it ends."),
+      time: string_("The start on the business's clock, HH:MM."),
+    }),
+    BookingDay: object("A day with something free.", {
+      date: date_("The day, on the business's clock."),
+      slots: array(ref("BookingSlot")),
+    }),
+    BookingAvailability: object("The public calendar.", {
+      settings: ref("BookingSettings"),
+      days: array(ref("BookingDay")),
+    }),
+    BookingRequest: object(
+      "A visitor booking a visit.",
+      {
+        start: timestamp("One of the slots offered."),
+        firstName: string_("First name.", { maxLength: 100 }),
+        lastName: string_("Last name.", { maxLength: 100 }),
+        email: string_("Where to confirm.", { format: "email" }),
+        phone: string_("A number to reach them on the day.", { maxLength: 40 }),
+        address: string_("Where the job is.", { maxLength: 300 }),
+        notes: string_("Anything worth knowing beforehand.", { maxLength: MAX_BOOKING_NOTES }),
+      },
+      ["start", "firstName", "lastName", "email", "phone"],
+    ),
+    BookingConfirmation: object("The visit, booked.", {
+      id: id("The appointment's id."),
+      start: timestamp("When it starts."),
+      end: timestamp("When it ends."),
+    }),
+    AppointmentStateInput: object(
+      "How a visit went.",
+      { state: enum_(APPOINTMENT_STATES, "Its state.") },
+      ["state"],
+    ),
+    Appointment: object("A booked visit.", {
+      id: id("The appointment's id."),
+      start: timestamp("When it starts."),
+      end: timestamp("When it ends."),
+      firstName: string_("First name."),
+      lastName: string_("Last name."),
+      email: string_("Their address.", { format: "email" }),
+      phone: string_("Their number."),
+      address: string_("Where the job is."),
+      notes: string_("What they wrote."),
+      state: enum_(APPOINTMENT_STATES, "Booked until somebody says how it went."),
+      createdAt: timestamp("When it was booked."),
       updatedAt: timestamp("Last changed."),
     }),
 
@@ -3134,6 +3293,11 @@ const TAGS: Json[] = [
     name: "Website",
     description:
       "The public page visitors see before signing in: its words, its pictures, which goes where, and the contact form.",
+  },
+  {
+    name: "Booking",
+    description:
+      "Visits booked from the public website: the calendar, the booking itself, and the appointments it makes.",
   },
 ];
 

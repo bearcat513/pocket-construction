@@ -106,6 +106,9 @@ describe("the document", () => {
       "GET /api/site",
       "GET /api/site/images/{id}/{file}",
       "POST /api/site/contact",
+      // Booking a visit from it, and the free times it is drawn from.
+      "GET /api/site/booking",
+      "POST /api/site/booking",
       // Blank catalogue templates: the same bytes for everyone.
       "GET /api/catalog/templates",
       "GET /api/catalog/templates/{file}",

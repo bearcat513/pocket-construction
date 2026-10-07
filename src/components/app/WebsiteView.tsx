@@ -21,11 +21,13 @@ import {
   type SiteText,
   type SlotDefinition,
 } from "@/lib/site";
+import type { Appointment, BookingSettings } from "@/lib/booking";
 import { cn } from "@/lib/utils";
+import { AppointmentsTab, BookingSettingsEditor } from "./Appointments";
 import { EmptyState, Field, Notice, Section } from "./common";
 import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
 
-type Tab = "layout" | "texts" | "images" | "requests";
+type Tab = "layout" | "texts" | "images" | "requests" | "appointments";
 
 type Props = {
   onError: (error: unknown) => void;
@@ -60,7 +62,8 @@ function usage(content: SiteContent): Map<string, string[]> {
  * Four tabs over four collections: the layout is the website config (which
  * text or picture is in which slot), and the texts and images are the content
  * it points at — edited once, shown wherever they are placed. Enquiries are
- * what the contact form has received.
+ * what the contact form has received, and appointments are the visits booked
+ * from the calendar on the page.
  *
  * Only an account with `siteEditor` is shown this, and PocketBase refuses
  * anyone else's writes regardless.
@@ -70,15 +73,25 @@ export function WebsiteView({ onError, onNotice }: Props) {
   const [tab, setTab] = useState<Tab>("layout");
   const [content, setContent] = useState<SiteContent | null>(null);
   const [requests, setRequests] = useState<ContactRequest[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [booking, setBooking] = useState<BookingSettings | null>(null);
+  const [editingBooking, setEditingBooking] = useState(false);
 
   const [editingSlot, setEditingSlot] = useState<SlotDefinition | null>(null);
   const [editingText, setEditingText] = useState<SiteText | null | undefined>(undefined);
   const [editingImage, setEditingImage] = useState<SiteImage | null | undefined>(undefined);
 
   const load = useCallback(async () => {
-    const [nextContent, nextRequests] = await Promise.all([api.siteContent(), api.contactRequests()]);
+    const [nextContent, nextRequests, nextAppointments, availability] = await Promise.all([
+      api.siteContent(),
+      api.contactRequests(),
+      api.appointments(),
+      api.bookingAvailability(),
+    ]);
     setContent(nextContent);
     setRequests(nextRequests);
+    setAppointments(nextAppointments);
+    setBooking(availability.settings);
   }, []);
 
   useEffect(() => {
@@ -87,12 +100,16 @@ export function WebsiteView({ onError, onNotice }: Props) {
 
   const used = useMemo(() => (content ? usage(content) : new Map<string, string[]>()), [content]);
   const unread = requests.filter(request => request.status === "new").length;
+  // What still needs somebody: a visit still booked is either to come, or
+  // over with nobody having said how it went.
+  const ahead = appointments.filter(entry => entry.state === "booked").length;
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "layout", label: "Layout" },
     { id: "texts", label: "Texts", count: content?.texts.length },
     { id: "images", label: "Images", count: content?.images.length },
     { id: "requests", label: "Enquiries", count: unread || undefined },
+    { id: "appointments", label: "Appointments", count: ahead || undefined },
   ];
 
   async function removeText(text: SiteText) {
@@ -166,7 +183,7 @@ export function WebsiteView({ onError, onNotice }: Props) {
             >
               {entry.label}
               {entry.count !== undefined && (
-                <Badge tone={entry.id === "requests" ? "pending" : "neutral"}>{entry.count}</Badge>
+                <Badge tone={entry.id === "requests" || entry.id === "appointments" ? "pending" : "neutral"}>{entry.count}</Badge>
               )}
             </button>
           ))}
@@ -259,6 +276,16 @@ export function WebsiteView({ onError, onNotice }: Props) {
             </ul>
           )}
         </Section>
+      ) : tab === "appointments" ? (
+        booking && (
+          <AppointmentsTab
+            appointments={appointments}
+            settings={booking}
+            onChange={setAppointments}
+            onEditSettings={() => setEditingBooking(true)}
+            onError={onError}
+          />
+        )
       ) : (
         <Section title="Enquiries" description="What the contact form has received, newest first.">
           {requests.length === 0 ? (
@@ -299,6 +326,19 @@ export function WebsiteView({ onError, onNotice }: Props) {
             setEditingText(undefined);
             await load().catch(onError);
             if (!used.get(saved.id)?.length) onNotice([`“${saved.name}” is saved. Put it on the page from the Layout tab.`]);
+          }}
+          onError={onError}
+        />
+      )}
+
+      {editingBooking && booking && (
+        <BookingSettingsEditor
+          settings={booking}
+          onClose={() => setEditingBooking(false)}
+          onSaved={saved => {
+            setEditingBooking(false);
+            setBooking(saved);
+            onNotice([saved.enabled ? "Booking settings saved. The calendar is on the website." : "Booking settings saved. Booking is off."]);
           }}
           onError={onError}
         />

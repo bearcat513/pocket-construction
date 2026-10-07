@@ -406,6 +406,25 @@ the browser cannot reach PocketBase; the seed photos live in `docker/pb_migratio
 site's palette and webfonts are scoped under `.site` in `styles/globals.css` so neither theme leaks
 into the other.
 
+**A visitor can book a visit, and two visitors can never book the same one.** `booking_settings`
+(one row, id `booking`, public to read, editors write) holds the hours on the business's own clock,
+the visit length, the buffer kept after each visit, notice, horizon and closed days; it ships
+**switched off**. `src/lib/booking.ts` is the engine, and as with pricing the browser draws the
+calendar with the same `availableDays` the server checks a booking against (`slotRefusal`) — never
+fork them. Times leave it as UTC instants; dates and "HH:MM" in it are the business's, and
+`zonedTime` is the only bridge (via `Intl`, so a clock change is handled). `appointments` has
+**no create rule at all**: every booking goes through `POST /api/build/booking`
+(`docker/pb_hooks/lib/booking.js`), which checks overlap-plus-buffer and inserts inside one
+transaction, because a rule sees one record and a check-then-write from Bun would let two visitors
+take one slot. The calendar's busy times come from the same hook as bare intervals — who booked is
+not public. The hook guarantees only no-overlap; hours, notice and the slot grid are Bun's, so the
+rules exist once. A booked visit's `state` is stored empty; "upcoming" vs "needs an outcome" is
+derived (`appointmentStanding`). The calendar is a section of the public site and also stands
+alone at `/book` for an iframe elsewhere — `frontend.tsx` renders it *instead of* `App`, so an
+embed never starts a session check — and it posts its height to the parent for the snippet from
+`bookingEmbedSnippet`. Nothing notifies anybody of a booking yet: Telegram sends to the caller's
+own chat, and a visitor has none.
+
 **Where you are is the URL.** `src/lib/route.ts` maps screens to paths (`/estimates/:id`,
 `/clients/:id`, `/receivables/:id`, `/settings/:tab`), using the on-screen words; `App.tsx` reads
 the path and `navigate()` pushes it, so Back, refresh and links work. Screens take `openId`/`onOpen`

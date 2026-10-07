@@ -21,6 +21,8 @@ import { ProjectEditor } from "@/components/app/ProjectEditor";
 import { ProductPicker } from "@/components/app/ProductPicker";
 import { ShareDialog } from "@/components/app/ShareDialog";
 import { SiteImageEditor, SiteTextEditor, SlotEditor } from "@/components/app/WebsiteView";
+import { BookingSettingsEditor } from "@/components/app/Appointments";
+import { DEFAULT_BOOKING_SETTINGS } from "@/lib/booking";
 import { SITE_SLOTS } from "@/lib/site";
 import { specimenQuote } from "@/lib/samples";
 import { EMPTY_MATERIAL, type PriceBook, type Product } from "@/lib/types";
@@ -194,6 +196,13 @@ describe("every form is a panel", () => {
       "website image editor",
       () => renderToStaticMarkup(<SiteImageEditor image={null} onClose={noop} onSaved={noop} onError={noop} />),
     ],
+    [
+      "booking settings editor",
+      () =>
+        renderToStaticMarkup(
+          <BookingSettingsEditor settings={DEFAULT_BOOKING_SETTINGS} onClose={noop} onSaved={noop} onError={noop} />,
+        ),
+    ],
   ];
 
   for (const [name, render] of cases) {
@@ -233,6 +242,7 @@ describe("what stays a modal", () => {
       "app/ProductPicker",
       "app/ShareDialog",
       "app/WebsiteView",
+      "app/Appointments",
     ];
 
     for (const name of forms) {

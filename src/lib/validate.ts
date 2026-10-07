@@ -26,6 +26,20 @@
  * scope actually offers. A formula that cannot work is caught by the person
  * writing it rather than by the quote it mispriced a month later.
  */
+import {
+  APPOINTMENT_STATES,
+  BOOKING_HONEYPOT,
+  BOOKING_LIMITS,
+  DEFAULT_BOOKING_SETTINGS,
+  MAX_BOOKING_NOTES,
+  WEEKDAYS,
+  isClockTime,
+  isTimeZone,
+  type AppointmentState,
+  type BookingRequest,
+  type BookingSettings,
+  type DayHours,
+} from "./booking";
 import { parseFormula } from "./formula";
 import { isEmbeddableImage } from "./image";
 import {
@@ -1573,4 +1587,99 @@ export function readContactRequest(raw: unknown): Validated<ContactRequestInput 
     description,
     spam: text(input[CONTACT_HONEYPOT], 200) !== "",
   });
+}
+
+/* --------------------------------- booking -------------------------------- */
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function readDayHours(raw: unknown, day: number): Validated<DayHours> {
+  const input = asRecord(raw);
+  const fallback = DEFAULT_BOOKING_SETTINGS.hours[day]!;
+  const start = text(input.start, 5) || fallback.start;
+  const end = text(input.end, 5) || fallback.end;
+  const open = flag(input.open, false);
+  if (!isClockTime(start) || !isClockTime(end)) return invalid(`${WEEKDAYS[day]}'s hours are written as HH:MM, e.g. 08:30.`);
+  if (open && start >= end) return invalid(`${WEEKDAYS[day]} closes before it opens.`);
+  return valid({ open, start, end });
+}
+
+/**
+ * When the business takes visits. A field left out keeps its default, so a
+ * script can switch booking on with `{ "enabled": true }` — but a field that
+ * is there and wrong is refused, because a mistyped zone or hour would
+ * otherwise quietly move every slot on the calendar.
+ */
+export function readBookingSettings(raw: unknown): Validated<BookingSettings> {
+  const input = asRecord(raw);
+  const defaults = DEFAULT_BOOKING_SETTINGS;
+  const limits = BOOKING_LIMITS;
+
+  const timezone = text(input.timezone, 100) || defaults.timezone;
+  if (!isTimeZone(timezone)) return invalid(`"${timezone}" is not a time zone. Use a name like America/New_York.`);
+
+  let hours = defaults.hours;
+  if (input.hours !== undefined) {
+    if (!Array.isArray(input.hours) || input.hours.length !== 7) {
+      return invalid('"hours" is seven days, Sunday first, each { open, start, end }.');
+    }
+    const read = input.hours.map(readDayHours);
+    const failed = read.find(entry => !entry.ok);
+    if (failed && !failed.ok) return failed;
+    hours = read.map(entry => (entry as { ok: true; value: DayHours }).value);
+  }
+
+  const closedDates = [...new Set((Array.isArray(input.closedDates) ? input.closedDates : []).map(isoDate).filter(Boolean))]
+    .sort()
+    .slice(0, limits.closedDates);
+
+  return valid({
+    enabled: flag(input.enabled, defaults.enabled),
+    title: text(input.title, limits.title) || defaults.title,
+    description: input.description === undefined ? defaults.description : text(input.description, limits.description),
+    timezone,
+    durationMinutes: integer(input.durationMinutes, defaults.durationMinutes, limits.durationMinutes.min, limits.durationMinutes.max),
+    bufferMinutes: integer(input.bufferMinutes, defaults.bufferMinutes, limits.bufferMinutes.min, limits.bufferMinutes.max),
+    noticeHours: integer(input.noticeHours, defaults.noticeHours, limits.noticeHours.min, limits.noticeHours.max),
+    horizonDays: integer(input.horizonDays, defaults.horizonDays, limits.horizonDays.min, limits.horizonDays.max),
+    hours,
+    closedDates,
+  });
+}
+
+/**
+ * A visitor booking a visit. Like the contact form, it is reached by
+ * strangers, so it speaks the form's language. Whether the time is free is
+ * not this function's to say — that is `slotRefusal`, and then PocketBase.
+ */
+export function readBookingRequest(raw: unknown): Validated<BookingRequest & { spam: boolean }> {
+  const input = asRecord(raw);
+
+  const start = text(input.start, 40);
+  const firstName = text(input.firstName, 100);
+  const lastName = text(input.lastName, 100);
+  const address = email(input.email);
+  const phone = text(input.phone, 40);
+
+  if (!start || !Number.isFinite(Date.parse(start))) return invalid("Choose a time from the calendar.");
+  if (!firstName || !lastName || !phone) return invalid("Please fill in your name and a phone number.");
+  if (!EMAIL_SHAPE.test(address)) return invalid("Please enter a valid email address.");
+
+  return valid({
+    start: new Date(Date.parse(start)).toISOString(),
+    firstName,
+    lastName,
+    email: address,
+    phone,
+    address: text(input.address, 300),
+    notes: text(input.notes, MAX_BOOKING_NOTES),
+    spam: text(input[BOOKING_HONEYPOT], 200) !== "",
+  });
+}
+
+export function readAppointmentState(raw: unknown): Validated<AppointmentState> {
+  const state = text(asRecord(raw).state, 20);
+  return (APPOINTMENT_STATES as readonly string[]).includes(state)
+    ? valid(state as AppointmentState)
+    : invalid(`"state" must be one of ${APPOINTMENT_STATES.join(", ")}.`);
 }

@@ -21,6 +21,13 @@ import type {
   SiteText,
 } from "./site";
 import type {
+  Appointment,
+  AppointmentState,
+  BookingAvailability,
+  BookingConfirmation,
+  BookingSettings,
+} from "./booking";
+import type {
   Account,
   CatalogSource,
   Invoice,
@@ -566,4 +573,14 @@ export const api = {
   setContactRequestStatus: (id: string, status: ContactRequestStatus) =>
     send<ContactRequest>(`/api/site/requests/${id}`, "PUT", { status }),
   deleteContactRequest: (id: string) => send<{ ok: true }>(`/api/site/requests/${id}`, "DELETE"),
+
+  /* -------------------------------- booking ------------------------------ */
+
+  bookingAvailability: () => request<BookingAvailability>("/api/site/booking"),
+  bookAppointment: (payload: Record<string, string>) => send<BookingConfirmation>("/api/site/booking", "POST", payload),
+  saveBookingSettings: (settings: BookingSettings) => send<BookingSettings>("/api/site/booking/settings", "PUT", settings),
+  appointments: () => request<Appointment[]>("/api/site/appointments"),
+  setAppointmentState: (id: string, state: AppointmentState) =>
+    send<Appointment>(`/api/site/appointments/${id}`, "PUT", { state }),
+  deleteAppointment: (id: string) => send<{ ok: true }>(`/api/site/appointments/${id}`, "DELETE"),
 };
