@@ -12,7 +12,7 @@ import {
   parseCatalogFile,
   serializeCatalogFile,
 } from "./catalogFile";
-import { SAMPLE_PRICE_BOOKS, SAMPLE_PRICING_RULES, SAMPLE_PRODUCTS, sampleApprovalRules } from "./samples";
+import { SAMPLE_PRODUCTS } from "./samples";
 import type { Product } from "./types";
 
 const product = (overrides: Record<string, unknown> = {}) => ({
@@ -20,9 +20,6 @@ const product = (overrides: Record<string, unknown> = {}) => ({
   name: "Platform",
   listPrice: 100,
   cost: 30,
-  currency: "USD",
-  chargeType: "recurring",
-  billingPeriod: "monthly",
   ...overrides,
 });
 
@@ -122,64 +119,42 @@ describe("what it refuses", () => {
     );
     expect(result.ok).toBe(false);
   });
-
-  test("a price book floor above its own price, and a duplicated SKU in one book", () => {
-    expect(
-      parseCatalogFile(file({ priceBooks: [{ name: "B", entries: [{ sku: "PLAT", unitPrice: 50, minPrice: 80 }] }] })).ok,
-    ).toBe(false);
-
-    expect(
-      parseCatalogFile(
-        file({ priceBooks: [{ name: "B", entries: [{ sku: "PLAT", unitPrice: 50 }, { sku: "PLAT", unitPrice: 60 }] }] }),
-      ).ok,
-    ).toBe(false);
-  });
-
-  test("a pricing rule referencing a variable its scope does not have", () => {
-    const result = parseCatalogFile(
-      file({ pricingRules: [{ name: "R", scope: "quote", target: "discountPercent", expression: "unitPrice * 2" }] }),
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Unknown variable");
-  });
-
-  test("an approval rule with no approver", () => {
-    const result = parseCatalogFile(file({ approvalRules: [{ name: "Nobody", metric: "discountPercent" }] }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("approver");
-  });
 });
 
 describe("what it warns about", () => {
-  test("a bundle or price book naming a SKU that is not in the file", () => {
+  test("a bundle naming a SKU that is not in the file", () => {
     // Legitimate — the SKU may already be in the catalogue — so it is a
     // warning, not a refusal.
     const result = parseCatalogFile(
-      file({
-        products: [{ ...product(), components: [{ sku: "ELSEWHERE", quantity: 1 }] }],
-        priceBooks: [{ name: "B", entries: [{ sku: "ALSO-ELSEWHERE", unitPrice: 1 }] }],
-      }),
+      file({ products: [{ ...product(), components: [{ sku: "ELSEWHERE", quantity: 1 }] }] }),
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.catalog.warnings.join(" ")).toContain("ELSEWHERE");
-    expect(result.catalog.warnings.join(" ")).toContain("ALSO-ELSEWHERE");
+  });
+
+  test("an older file's price books and rules are skipped, and said to be", () => {
+    const result = parseCatalogFile(
+      file({
+        priceBooks: [{ name: "B", entries: [{ sku: "PLAT", unitPrice: 1 }] }],
+        approvalRules: [{ name: "Nobody", metric: "discountPercent" }],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.catalog.products).toHaveLength(1);
+    expect(result.catalog).not.toHaveProperty("priceBooks");
+    expect(result.catalog.warnings.join(" ")).toContain("skipped");
   });
 });
 
 describe("round trip", () => {
   test("the sample catalogue survives export and re-import unchanged", () => {
     // The sample exercises every feature the format has to carry: options,
-    // configuration rules, tiers, bundles and both kinds of policy.
-    const parsed = parseCatalogFile({
-      kind: CATALOG_FILE_KIND,
-      version: 1,
-      products: SAMPLE_PRODUCTS,
-      priceBooks: SAMPLE_PRICE_BOOKS,
-      pricingRules: SAMPLE_PRICING_RULES,
-      approvalRules: sampleApprovalRules("approver@example.com"),
-    });
+    // configuration rules, tiers and bundles.
+    const parsed = parseCatalogFile({ kind: CATALOG_FILE_KIND, version: 1, products: SAMPLE_PRODUCTS });
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -194,7 +169,7 @@ describe("round trip", () => {
 
   test("ids are stripped on export, so the file stays diffable", () => {
     const built = buildCatalogFile({
-      products: [{ ...product(), id: "prd_1", ownerId: "u1", sharedWith: [], createdAt: "x", updatedAt: "y" } as unknown as Product],
+      products: [{ ...product(), id: "prd_1", ownerId: "u1", createdAt: "x", updatedAt: "y" } as unknown as Product],
     });
 
     expect(built.products[0]).not.toHaveProperty("id");

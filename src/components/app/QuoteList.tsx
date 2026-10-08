@@ -213,10 +213,7 @@ export function QuoteList({ preferences, hrefFor, onOpen, onNew, onError }: Prop
                     </Td>
                     <Td>{quote.customer.name || <span className="text-muted-foreground">—</span>}</Td>
                     <Td>
-                      <div className="flex items-center gap-1.5">
-                        <StatusBadge status={quote.status} />
-                        {quote.pendingApprovals > 0 && <Badge tone="pending">{quote.pendingApprovals} pending</Badge>}
-                      </div>
+                      <StatusBadge status={quote.status} />
                     </Td>
                     <Td numeric className="text-muted-foreground">
                       {quote.lineCount}

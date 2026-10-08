@@ -21,7 +21,7 @@ module.exports.register = () => {
   onRecordAfterCreateSuccess(e => {
     e.next();
 
-    const owned = ["accounts", "products", "price_books", "pricing_rules", "approval_rules", "proposal_templates", "quotes"];
+    const owned = ["accounts", "products", "proposal_templates", "quotes"];
 
     try {
       // Anyone but the very first account leaves this alone.

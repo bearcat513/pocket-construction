@@ -8,9 +8,8 @@
  * account skips, and the handful of anonymous routes still run.
  *
  * The tests that matter most are the ones about *authority*: that the server
- * prices a quote rather than believing one, that an approver sees the quote
- * they were asked about and nothing else, and that a quote in review cannot be
- * edited underneath the person reviewing it.
+ * prices a quote rather than believing one, that one account sees nothing of
+ * another's, and that a sent quote cannot be edited underneath its reader.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, startTestPocketBase } from "./testPocketBase";
@@ -84,14 +83,9 @@ const PLATFORM = {
   sku: "PLAT",
   name: "Platform",
   family: "Software",
-  chargeType: "recurring",
-  billingPeriod: "monthly",
-  unitOfMeasure: "user",
+  unitOfMeasure: "EA",
   listPrice: 100,
   cost: 30,
-  currency: "USD",
-  minQuantity: 1,
-  floorDiscountPercent: 20,
   optionGroups: [
     {
       key: "tier",
@@ -168,8 +162,6 @@ afterAll(async () => {
 const quoteBody = (overrides: Record<string, unknown> = {}, line: Record<string, unknown> = {}) => ({
   name: "Expansion",
   accountId,
-  currency: "USD",
-  termMonths: 12,
   taxPercent: 0,
   lines: [
     {
@@ -203,8 +195,7 @@ describe("the front door", () => {
     // now starts one step earlier than it used to: what is priced is what has
     // to be bought, not what the tape measure said.
     expect(payload.pricing.pipeline[0]).toContain("take-off");
-    expect(payload.pricing.pipeline[1]).toContain("price book");
-    expect(payload.currencies).toContain("USD");
+    expect(payload.pricing.pipeline[1]).toContain("markup");
   });
 
   test("an unknown API path is a 404, not the SPA", async () => {
@@ -221,9 +212,8 @@ describe("the front door", () => {
 
   signedIn("GET /api/reference gives the UI its vocabulary", async () => {
     const payload = await json("/api/reference");
-    expect(payload.quoteStatuses).toContain("in_review");
+    expect(payload.quoteStatuses).toEqual(["draft", "sent", "accepted", "declined", "expired"]);
     expect(payload.quoteTransitions.draft).toEqual(["sent"]);
-    expect(payload.pricingVariables.line.map((v: any) => v.name)).toContain("unitPrice");
   });
 });
 
@@ -275,13 +265,12 @@ describe("the catalogue", () => {
     expect(missing.defaults).toEqual(["standard"]);
   });
 
-  signedIn("a price book will not take a floor above its own price", async () => {
-    const payload = await post("/api/price-books", {
-      name: "Broken",
-      currency: "USD",
-      entries: [{ sku: "PLAT", unitPrice: 80, minPrice: 100 }],
-    });
-    expect(payload.error).toContain("floor");
+  signedIn("the routes the simplification removed are gone", async () => {
+    for (const path of ["/api/price-books", "/api/pricing-rules", "/api/approval-rules", "/api/quotes/awaiting"]) {
+      expect((await api(path)).status).toBe(404);
+    }
+    // And a catalogue item is the owner's own, never shared.
+    expect((await api(`/api/products/${platformId}/shares`)).status).toBe(404);
   });
 });
 
@@ -365,8 +354,6 @@ describe("customers", () => {
     const quote = await post("/api/quotes", {
       name: "Meridian pilot",
       accountId: meridianId,
-      currency: "USD",
-      termMonths: 12,
       lines: [{ id: "ln_1", productId: platformId, quantity: 10, selectedOptions: ["standard"] }],
     });
 
@@ -430,71 +417,68 @@ describe("pricing is the server's job", () => {
       lines: [{ ...quoteBody().lines[0], netTotal: 0, unitPrice: 0 }],
     });
 
-    expect(created.quote.totals.netTotal).toBe(12_000);
+    expect(created.quote.totals.netTotal).toBe(1_000);
     expect(created.quote.lines[0].unitPrice).toBe(100);
-    expect(created.quote.lines[0].netTotal).toBe(12_000);
+    expect(created.quote.lines[0].netTotal).toBe(1_000);
   });
 
-  signedIn("options, tiers and the term all reach the price", async () => {
-    const created = await post(
-      "/api/quotes",
-      quoteBody({ termMonths: 24 }, { quantity: 50, selectedOptions: ["premium"] }),
-    );
+  signedIn("options and tiers both reach the price", async () => {
+    const created = await post("/api/quotes", quoteBody({}, { quantity: 50, selectedOptions: ["premium"] }));
     const line = created.quote.lines[0];
 
-    // 100 × 1.5 = 150, less the 10% tier at 50 users = 135/user/month.
+    // 100 × 1.5 = 150, less the 10% tier at 50 = 135 each.
     expect(line.optionsUnitDelta).toBe(50);
     expect(line.tier.value).toBe(10);
     expect(line.unitPrice).toBe(135);
-    expect(line.periods).toBe(24);
-    expect(line.netTotal).toBe(162_000);
-    expect(created.quote.totals.monthlyRecurringTotal).toBe(6_750);
+    expect(line.netTotal).toBe(6_750);
   });
 
-  signedIn("a pricing rule fires only when its condition holds", async () => {
-    const rule = await post("/api/pricing-rules", {
-      name: "Volume break",
-      scope: "line",
-      condition: "quantity >= 100",
-      target: "discountPercent",
-      expression: "15",
-      message: "100+ users",
-    });
-    expect(rule.id).toBeString();
+  signedIn("a new quote takes the settings' markup and overhead, then keeps its own", async () => {
+    const lumber = await post("/api/products", { sku: "COSTED", name: "Priced from cost", unitOfMeasure: "EA", listPrice: 0, cost: 50 });
+    await put("/api/preferences", { ...DEFAULT_PREFERENCES, markupPercent: 20, overheadPercent: 10 });
 
-    const small = await post("/api/quotes", quoteBody({ name: "Small" }, { quantity: 10 }));
-    expect(small.quote.lines[0].appliedRules).toEqual([]);
+    try {
+      const body = { name: "Cost plus", accountId, lines: [{ id: "ln_1", productId: lumber.id, quantity: 10 }] };
+      const created = await post("/api/quotes", body);
 
-    const large = await post("/api/quotes", quoteBody({ name: "Large" }, { quantity: 100 }));
-    expect(large.quote.lines[0].appliedRules[0].name).toBe("Volume break");
-    expect(large.quote.lines[0].effectiveDiscountPercent).toBeGreaterThan(15);
+      expect(created.quote.markupPercent).toBe(20);
+      expect(created.quote.overheadPercent).toBe(10);
+      // 50 + 20% = 60 each; 600 for ten, and 10% overhead on top. (Tax is the
+      // client's own 10%, on top of all of it.)
+      expect(created.quote.lines[0].unitPrice).toBe(60);
+      expect(created.quote.lines[0].pricedFromCost).toBe(true);
+      expect(created.quote.totals.subtotal).toBe(600);
+      expect(created.quote.totals.overheadAmount).toBe(60);
+      expect(created.quote.totals.netTotal).toBe(660);
 
-    await api(`/api/pricing-rules/${rule.id}`, { method: "DELETE" });
-  });
+      // The settings move on; an estimate already written does not move with them.
+      await put("/api/preferences", { ...DEFAULT_PREFERENCES, markupPercent: 50, overheadPercent: 0 });
+      const resaved = await put(`/api/quotes/${created.quote.id}`, body);
+      expect(resaved.quote.markupPercent).toBe(20);
+      expect(resaved.quote.totals.netTotal).toBe(660);
 
-  signedIn("a pricing rule referencing an unknown variable is refused", async () => {
-    const payload = await post("/api/pricing-rules", {
-      name: "Typo",
-      scope: "line",
-      target: "discountPercent",
-      expression: "quantitty * 2",
-    });
-    expect(payload.error).toContain("Unknown variable");
+      // Unless the estimate itself is told otherwise.
+      const changed = await put(`/api/quotes/${created.quote.id}`, { ...body, markupPercent: 0, overheadPercent: 0 });
+      expect(changed.quote.totals.netTotal).toBe(500);
+    } finally {
+      await put("/api/preferences", DEFAULT_PREFERENCES);
+      await api(`/api/products/${lumber.id}`, { method: "DELETE" });
+    }
   });
 
   signedIn("POST /api/quotes/preview prices without storing", async () => {
     const before = (await json("/api/quotes")).length;
     const preview = await post("/api/quotes/preview", quoteBody({ name: "Hypothetical" }));
 
-    expect(preview.totals.netTotal).toBe(12_000);
+    expect(preview.totals.netTotal).toBe(1_000);
     expect((await json("/api/quotes")).length).toBe(before);
   });
 
-  signedIn("POST /api/formula/validate checks against the scope's own variables", async () => {
-    const good = await post("/api/formula/validate", { expression: "subtotal * 0.9", scope: "quote" });
+  signedIn("POST /api/formula/validate checks an item rule against what it can see", async () => {
+    const good = await post("/api/formula/validate", { expression: "quantity >= 4 && option.std", optionKeys: ["std"] });
     expect(good.valid).toBe(true);
 
-    const bad = await post("/api/formula/validate", { expression: "unitPrice * 2", scope: "quote" });
+    const bad = await post("/api/formula/validate", { expression: "subtotal * 0.9" });
     expect(bad.valid).toBe(false);
     expect(bad.error).toContain("Unknown variable");
   });
@@ -520,12 +504,8 @@ describe("a quote's life", () => {
     expect(original.version).toBe(1);
   });
 
-  signedIn("with no approval rules, a submitted quote is approved outright", async () => {
+  signedIn("a draft is sent, then accepted", async () => {
     const created = await post("/api/quotes", quoteBody({ name: "Clean" }));
-    const submitted = await post(`/api/quotes/${created.quote.id}/submit`, {});
-
-    expect(submitted.quote.status).toBe("approved");
-    expect(submitted.required).toEqual([]);
 
     const sent = await post(`/api/quotes/${created.quote.id}/status`, { status: "sent" });
     expect(sent.status).toBe("sent");
@@ -546,20 +526,43 @@ describe("a quote's life", () => {
     expect((await response.json()).error).toContain("can only become sent");
   });
 
-  signedIn("an empty quote cannot be submitted", async () => {
+  signedIn("an empty quote cannot be sent", async () => {
     const created = await post("/api/quotes", quoteBody({ name: "Empty", lines: [] }));
-    const response = await api(`/api/quotes/${created.quote.id}/submit`, { method: "POST" });
+    const response = await api(`/api/quotes/${created.quote.id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status: "sent" }),
+    });
     expect(response.status).toBe(400);
+  });
+
+  signedIn("a quote with a line the catalogue refuses cannot be sent", async () => {
+    // No option chosen in a required group: the configurator says no.
+    const created = await post("/api/quotes", quoteBody({ name: "Unconfigured" }, { selectedOptions: [] }));
+    expect(created.issues.length).toBeGreaterThan(0);
+
+    const response = await api(`/api/quotes/${created.quote.id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status: "sent" }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("must be fixed first");
+  });
+
+  signedIn("a sent quote cannot be edited underneath its reader", async () => {
+    const created = await post("/api/quotes", quoteBody({ name: "Out the door" }));
+    await post(`/api/quotes/${created.quote.id}/status`, { status: "sent" });
+
+    const response = await api(`/api/quotes/${created.quote.id}`, {
+      method: "PUT",
+      body: JSON.stringify(quoteBody({ name: "Sneaky" })),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("cannot be edited");
   });
 });
 
 /* ------------------------------- receivables ----------------------------- */
 
-/*
- * Placed before the approvals block on purpose: that one creates approval
- * rules, and once any exist a draft can no longer be sent without going
- * through them. Everything here needs a quote it can get to `accepted`.
- */
 describe("receivables", () => {
   /** A quote taken all the way to accepted, and the invoice raised from it. */
   let acceptedQuote: any = null;
@@ -568,7 +571,6 @@ describe("receivables", () => {
   /** Walks a fresh quote to `accepted` and hands it back. */
   const acceptedQuoteFor = async (name: string) => {
     const created = await post("/api/quotes", quoteBody({ name }));
-    await post(`/api/quotes/${created.quote.id}/submit`, {});
     await post(`/api/quotes/${created.quote.id}/status`, { status: "sent" });
     return post(`/api/quotes/${created.quote.id}/status`, { status: "accepted" });
   };
@@ -905,244 +907,29 @@ describe("receivables", () => {
   });
 });
 
-/* -------------------------------- approvals ------------------------------ */
+/* -------------------------------- privacy -------------------------------- */
 
-describe("approvals", () => {
-  let ruleId = "";
-  let quoteId = "";
+describe("one account's records are its own", () => {
+  signedIn("Bob sees nothing of Alice's catalogue, clients or quotes", async () => {
+    const created = await post("/api/quotes", quoteBody({ name: "Alice's own" }));
 
-  signedIn("a deep discount puts a quote into review and tells Bob", async () => {
-    ruleId = (
-      await post("/api/approval-rules", {
-        name: "Sales manager",
-        scope: "quote",
-        metric: "discountPercent",
-        comparator: ">",
-        threshold: 15,
-        level: 1,
-        approvers: [BOB],
-        message: "Past 15% needs a manager.",
-      })
-    ).id;
-
-    const created = await post("/api/quotes", quoteBody({ name: "Deep discount" }, { discountPercent: 30 }));
-    quoteId = created.quote.id;
-
-    const submitted = await post(`/api/quotes/${quoteId}/submit`, {});
-    expect(submitted.quote.status).toBe("in_review");
-    expect(submitted.required).toHaveLength(1);
-    expect(submitted.required[0].approverEmails).toEqual([BOB]);
-    expect(submitted.required[0].reason).toContain("30%");
-    expect(submitted.unresolved).toEqual([]);
-  });
-
-  signedIn("a quote in review cannot be edited underneath its reviewer", async () => {
-    const response = await api(`/api/quotes/${quoteId}`, {
-      method: "PUT",
-      body: JSON.stringify(quoteBody({ name: "Sneaky" })),
-    });
-    expect(response.status).toBe(409);
-    expect((await response.json()).error).toContain("cannot be edited");
-  });
-
-  signedIn("nor sent while an approval is outstanding", async () => {
-    const response = await api(`/api/quotes/${quoteId}/status`, {
-      method: "POST",
-      body: JSON.stringify({ status: "sent" }),
-    });
-    expect(response.status).toBe(409);
-  });
-
-  signedIn("the approver sees it in their queue — and nothing else of Alice's", async () => {
-    const queue = await json("/api/quotes/awaiting", { cookie: bobCookie });
-    expect(queue.map((quote: any) => quote.id)).toEqual([quoteId]);
-
-    // Bob can read that one quote, because he was asked to approve it.
-    expect((await api(`/api/quotes/${quoteId}`, { cookie: bobCookie })).status).toBe(200);
-
-    // He cannot read Alice's catalogue, customers or anything else.
     expect(await json("/api/products", { cookie: bobCookie })).toEqual([]);
     expect(await json("/api/accounts", { cookie: bobCookie })).toEqual([]);
     expect((await api(`/api/products/${platformId}`, { cookie: bobCookie })).status).toBe(404);
+    expect((await api(`/api/quotes/${created.quote.id}`, { cookie: bobCookie })).status).toBe(404);
   });
 
-  signedIn("an approver cannot rewrite the quote they are approving", async () => {
-    // PocketBase's update rule lets Bob write this record; the hook holds him
-    // to the approval fields, so a re-priced body changes nothing.
-    const response = await fetch(`${pocketbase.url}/api/collections/quotes/records/${quoteId}`, {
+  signedIn("nor can he write to her quote by going to PocketBase directly", async () => {
+    const created = await post("/api/quotes", quoteBody({ name: "Not Bob's" }));
+    await fetch(`${pocketbase.url}/api/collections/quotes/records/${created.quote.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: await bobToken() },
-      body: JSON.stringify({ name: "Rewritten by the approver", totals: { grandTotal: 1 } }),
+      body: JSON.stringify({ name: "Rewritten by Bob", totals: { grandTotal: 1 } }),
     });
 
-    // The write is accepted or refused depending on the field; what matters is
-    // that the stored quote is unchanged.
-    void response;
-    const after = await json(`/api/quotes/${quoteId}`);
-    expect(after.name).toBe("Deep discount");
+    const after = await json(`/api/quotes/${created.quote.id}`);
+    expect(after.name).toBe("Not Bob's");
     expect(after.totals.grandTotal).toBeGreaterThan(1);
-  });
-
-  signedIn("the approval is Bob's to give, and it releases the quote", async () => {
-    // Alice cannot approve her own quote: there is nothing addressed to her.
-    const mine = await api(`/api/quotes/${quoteId}/decision`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved" }),
-    });
-    expect(mine.status).toBe(403);
-
-    const decided = await post(
-      `/api/quotes/${quoteId}/decision`,
-      { decision: "approved", comment: "Fine at this volume." },
-      { cookie: bobCookie },
-    );
-    expect(decided.quote.status).toBe("approved");
-    expect(decided.quote.approvals[0].decisions[0].approverEmail).toBe(BOB);
-
-    const sent = await post(`/api/quotes/${quoteId}/status`, { status: "sent" });
-    expect(sent.status).toBe("sent");
-  });
-
-  signedIn("a rejection sends it back, and editing clears the decisions", async () => {
-    const created = await post("/api/quotes", quoteBody({ name: "To reject" }, { discountPercent: 40 }));
-    const id = created.quote.id;
-    await post(`/api/quotes/${id}/submit`, {});
-
-    const rejected = await post(
-      `/api/quotes/${id}/decision`,
-      { decision: "rejected", comment: "Too deep." },
-      { cookie: bobCookie },
-    );
-    expect(rejected.quote.status).toBe("rejected");
-
-    // A rejected quote is the rep's again, and saving it drops the approvals
-    // that were made about numbers which no longer apply.
-    const saved = await put(`/api/quotes/${id}`, quoteBody({ name: "To reject" }, { discountPercent: 5 }));
-    expect(saved.quote.status).toBe("draft");
-    expect(saved.quote.approvals).toEqual([]);
-
-    await api(`/api/approval-rules/${ruleId}`, { method: "DELETE" });
-  });
-
-  signedIn("an approval rule with no approver is refused", async () => {
-    const payload = await post("/api/approval-rules", { name: "Nobody", metric: "discountPercent", threshold: 10 });
-    expect(payload.error).toContain("approver");
-  });
-
-  signedIn("a rule can ask several people, and the quote waits for the quorum", async () => {
-    const carol = `carol-quorum-${suffix}@example.com`;
-    const carolCookie = await register(carol);
-
-    const twoOfTwo = (
-      await post("/api/approval-rules", {
-        name: "Both directors",
-        scope: "quote",
-        metric: "discountPercent",
-        comparator: ">",
-        threshold: 15,
-        level: 1,
-        approvers: [BOB, carol],
-        approvalsRequired: 2,
-        rejectionsRequired: 1,
-      })
-    ).id;
-
-    const created = await post("/api/quotes", quoteBody({ name: "Needs two" }, { discountPercent: 30 }));
-    const submitted = await post(`/api/quotes/${created.quote.id}/submit`, {});
-
-    // One request addressed to both, not one request each.
-    expect(submitted.required).toHaveLength(1);
-    expect(submitted.required[0].approverEmails.sort()).toEqual([BOB, carol].sort());
-    expect(submitted.required[0].approvalsRequired).toBe(2);
-    expect(submitted.unresolved).toEqual([]);
-
-    // Both can see it; neither alone can release it.
-    expect((await json("/api/quotes/awaiting", { cookie: bobCookie })).length).toBeGreaterThan(0);
-    expect((await json("/api/quotes/awaiting", { cookie: carolCookie })).length).toBeGreaterThan(0);
-
-    const first = await post(
-      `/api/quotes/${created.quote.id}/decision`,
-      { decision: "approved", comment: "Fine by me." },
-      { cookie: bobCookie },
-    );
-    expect(first.quote.status).toBe("in_review");
-    expect(first.quote.approvals[0].decisions).toHaveLength(1);
-
-    // Still not sendable on one approval.
-    const early = await api(`/api/quotes/${created.quote.id}/status`, {
-      method: "POST",
-      body: JSON.stringify({ status: "sent" }),
-    });
-    expect(early.status).toBe(409);
-
-    const second = await post(
-      `/api/quotes/${created.quote.id}/decision`,
-      { decision: "approved" },
-      { cookie: carolCookie },
-    );
-    expect(second.quote.status).toBe("approved");
-    expect(second.quote.approvals[0].decisions).toHaveLength(2);
-
-    await api(`/api/approval-rules/${twoOfTwo}`, { method: "DELETE" });
-  });
-
-  signedIn("one rejection sends it back even when two approvals were wanted", async () => {
-    const dana = `dana-quorum-${suffix}@example.com`;
-    const danaCookie = await register(dana);
-
-    const ruleId = (
-      await post("/api/approval-rules", {
-        name: "Two yeses, one no",
-        scope: "quote",
-        metric: "discountPercent",
-        comparator: ">",
-        threshold: 15,
-        level: 1,
-        approvers: [BOB, dana],
-        approvalsRequired: 2,
-        rejectionsRequired: 1,
-      })
-    ).id;
-
-    const created = await post("/api/quotes", quoteBody({ name: "One no" }, { discountPercent: 35 }));
-    await post(`/api/quotes/${created.quote.id}/submit`, {});
-
-    const rejected = await post(
-      `/api/quotes/${created.quote.id}/decision`,
-      { decision: "rejected", comment: "Margin is too thin." },
-      { cookie: danaCookie },
-    );
-    expect(rejected.quote.status).toBe("rejected");
-
-    await api(`/api/approval-rules/${ruleId}`, { method: "DELETE" });
-  });
-
-  signedIn("a quorum larger than the room is clamped on the way in", async () => {
-    const created = await post("/api/approval-rules", {
-      name: "Impossible",
-      metric: "discountPercent",
-      threshold: 10,
-      approvers: [BOB],
-      approvalsRequired: 5,
-    });
-
-    // Otherwise the rule could never be satisfied and would block forever.
-    expect(created.approvalsRequired).toBe(1);
-    await api(`/api/approval-rules/${created.id}`, { method: "DELETE" });
-  });
-
-  signedIn("a rule written the old way, with one approverEmail, still reads", async () => {
-    // The shape before a rule could name several people.
-    const created = await post("/api/approval-rules", {
-      name: "Legacy shape",
-      metric: "discountPercent",
-      threshold: 20,
-      approverEmail: BOB,
-    });
-
-    expect(created.approvers).toEqual([BOB]);
-    expect(created.approvalsRequired).toBe(1);
-    await api(`/api/approval-rules/${created.id}`, { method: "DELETE" });
   });
 });
 
@@ -1159,46 +946,37 @@ async function bobToken(): Promise<string> {
 /* --------------------------------- sharing ------------------------------- */
 
 describe("sharing", () => {
-  signedIn("a shared product is readable, not writable, and quotable", async () => {
-    await post(`/api/products/${platformId}/shares`, { email: BOB });
+  signedIn("a shared quote is readable, not writable", async () => {
+    const quote = (await post("/api/quotes", quoteBody({ name: "For Bob to read" }))).quote;
+    await post(`/api/quotes/${quote.id}/shares`, { email: BOB });
 
-    const shares = await json(`/api/products/${platformId}/shares`);
+    const shares = await json(`/api/quotes/${quote.id}/shares`);
     expect(shares.sharedWith).toEqual([BOB]);
     expect(shares.canShare).toBe(true);
 
-    // Bob sees it now.
-    const bobsCatalogue = await json("/api/products", { cookie: bobCookie });
-    expect(bobsCatalogue.map((product: any) => product.sku)).toEqual(["PLAT"]);
+    // Bob reads it now.
+    expect((await json(`/api/quotes/${quote.id}`, { cookie: bobCookie })).name).toBe("For Bob to read");
 
     // He cannot change it.
-    const write = await api(`/api/products/${platformId}`, {
+    const write = await api(`/api/quotes/${quote.id}`, {
       method: "PUT",
       cookie: bobCookie,
-      body: JSON.stringify({ ...PLATFORM, name: "Bob's platform" }),
+      body: JSON.stringify(quoteBody({ name: "Bob's version" })),
     });
     expect(write.status).toBe(404);
 
-    // But he can quote from it, and the quote is his.
-    const bobsQuote = await post(
-      "/api/quotes",
-      { name: "Bob's deal", currency: "USD", termMonths: 12, lines: [{ productId: platformId, quantity: 5, selectedOptions: ["standard"] }] },
-      { cookie: bobCookie },
-    );
-    expect(bobsQuote.quote.totals.netTotal).toBe(6_000);
-    expect((await json("/api/quotes")).find((quote: any) => quote.id === bobsQuote.quote.id)).toBeUndefined();
-
     // A recipient sees who shared it, and not who else has it.
-    const bobsView = await json(`/api/products/${platformId}/shares`, { cookie: bobCookie });
+    const bobsView = await json(`/api/quotes/${quote.id}/shares`, { cookie: bobCookie });
     expect(bobsView.owner).toBe(ALICE);
     expect(bobsView.canShare).toBe(false);
     expect(bobsView.sharedWith).toEqual([]);
 
-    await api(`/api/products/${platformId}/shares?email=${encodeURIComponent(BOB)}`, { method: "DELETE" });
-    expect(await json("/api/products", { cookie: bobCookie })).toEqual([]);
+    await api(`/api/quotes/${quote.id}/shares?email=${encodeURIComponent(BOB)}`, { method: "DELETE" });
+    expect((await api(`/api/quotes/${quote.id}`, { cookie: bobCookie })).status).toBe(404);
   });
 
   signedIn("the directory lists the accounts, so a picker has something to offer", async () => {
-    // The complaint this answers: an empty approver dropdown on an instance
+    // The complaint this answers: an empty picker on an instance
     // with ten accounts, because the list was built from addresses you had
     // already typed rather than from the accounts that exist.
     const payload = await json("/api/directory");
@@ -1239,7 +1017,8 @@ describe("sharing", () => {
   });
 
   signedIn("sharing an address with no account says so", async () => {
-    const response = await api(`/api/products/${platformId}/shares`, {
+    const quote = (await post("/api/quotes", quoteBody({ name: "Shared with nobody" }))).quote;
+    const response = await api(`/api/quotes/${quote.id}/shares`, {
       method: "POST",
       body: JSON.stringify({ email: "nobody@example.com" }),
     });
@@ -1263,7 +1042,7 @@ describe("what comes out", () => {
     expect(header).toContain("sku");
     expect(header).toContain("netTotal");
     // Bare numbers, because a spreadsheet has to add them up.
-    expect(row).toContain("12000");
+    expect(row).toContain("1000");
   });
 
   signedIn("a quote renders through a proposal template", async () => {
@@ -1273,7 +1052,7 @@ describe("what comes out", () => {
     const text = await response.text();
     expect(text).toContain("Harbour Logistics");
     expect(text).toContain("PLAT");
-    expect(text).toContain("$12,000.00");
+    expect(text).toContain("$1,000.00");
   });
 
   signedIn("a PDF template answers with a PDF, not with text", async () => {
@@ -1401,7 +1180,7 @@ describe("what comes out", () => {
           {
             type: "totals",
             rows: [
-              { label: "Contract value", field: "totalContractValue" },
+              { label: "Overhead", field: "overheadAmount" },
               { label: "Margin", field: "marginPercent" },
             ],
           },
@@ -1412,7 +1191,7 @@ describe("what comes out", () => {
 
     expect(created.kind).toBe("invoice");
     // Neither a quote's numbers nor an internal one survive the read.
-    expect(created.body).not.toContain("totalContractValue");
+    expect(created.body).not.toContain("overheadAmount");
     expect(created.body).not.toContain("marginPercent");
     expect(created.body).toContain("balance");
   });
@@ -1507,7 +1286,7 @@ describe("what comes out", () => {
     // Nothing derived is in the file: status and aging are recomputed on read.
     expect(withLedger.status).toBeUndefined();
     expect(file.quotes[0].lines).toBeArray();
-    expect(file.preferences.defaultCurrency).toBe("USD");
+    expect(file.preferences.markupPercent).toBe(DEFAULT_PREFERENCES.markupPercent);
   });
 });
 
@@ -1519,7 +1298,7 @@ describe("preferences", () => {
 
     const saved = await put("/api/preferences", {
       theme: "dark",
-      defaultTermMonths: 9_999,
+      markupPercent: 9_999,
       quoteValidDays: 0,
       defaultCurrency: "NOPE",
       showMargin: true,
@@ -1528,9 +1307,10 @@ describe("preferences", () => {
     });
 
     expect(saved.theme).toBe("dark");
-    expect(saved.defaultTermMonths).toBe(PREFERENCE_LIMITS.termMonths.max);
+    expect(saved.markupPercent).toBe(PREFERENCE_LIMITS.markupPercent.max);
     expect(saved.quoteValidDays).toBe(PREFERENCE_LIMITS.validDays.min);
-    expect(saved.defaultCurrency).toBe("USD");
+    // A key the app no longer has is dropped like any other stranger.
+    expect(saved).not.toHaveProperty("defaultCurrency");
     expect(saved.showMargin).toBe(true);
     expect(saved).not.toHaveProperty("somethingElse");
 
@@ -1549,10 +1329,9 @@ describe("the worked example", () => {
     expect(first.created.quotes).toBe(1);
     expect(first.quoteId).toBeString();
 
-    // The sample quote is built to need approval.
-    const submitted = await post(`/api/quotes/${first.quoteId}/submit`, {}, { cookie: dave });
-    expect(submitted.quote.status).toBe("in_review");
-    expect(submitted.required.length).toBeGreaterThan(0);
+    // The sample estimate prices cleanly, so it can go straight out.
+    const sent = await post(`/api/quotes/${first.quoteId}/status`, { status: "sent" }, { cookie: dave });
+    expect(sent.status).toBe("sent");
 
     // The jobs and the supplier feed come with it, and the estimate is
     // attached to the job rather than floating loose.
@@ -1788,7 +1567,6 @@ describe("catalogue sources", () => {
     // Everything the feed does not own survived it.
     expect(stud.wasteFactorPercent).toBe(8);
     expect(stud.listPrice).toBe(4.28);
-    expect(stud.floorDiscountPercent).toBe(12);
 
     // And the sync said where the number came from.
     expect(stud.provenance.sourceId).toBe(source.id);

@@ -388,3 +388,52 @@ describe("backfilling the template kind", () => {
     ]);
   });
 });
+
+/* --------------------- reopening approval statuses (1750000014) ------------------ */
+
+/**
+ * Quotes that were somewhere in the approval ladder when it was removed.
+ *
+ * Every one of them goes back to `draft`, which is the one status each could
+ * honestly be in once nobody can approve anything — and nothing else moves:
+ * a quote already sent, accepted or declined is a document somebody has.
+ */
+const SIMPLIFY_MIGRATION = "docker/pb_migrations/1750000014_simplify.js";
+
+describe("reopening quotes the approval ladder was holding", () => {
+  const quotesTable = (rows: [string, string][]): Database => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE quotes (id TEXT PRIMARY KEY, status TEXT)");
+    for (const [id, status] of rows) db.run("INSERT INTO quotes (id, status) VALUES (?, ?)", [id, status]);
+    return db;
+  };
+
+  const statuses = (db: Database) =>
+    (db.query("SELECT id, status FROM quotes ORDER BY id").all() as { id: string; status: string }[]).map(
+      row => [row.id, row.status] as const,
+    );
+
+  test("in review, approved and rejected become drafts; nothing else moves", async () => {
+    const db = quotesTable([
+      ["a", "in_review"],
+      ["b", "approved"],
+      ["c", "rejected"],
+      ["d", "draft"],
+      ["e", "sent"],
+      ["f", "accepted"],
+      ["g", "declined"],
+    ]);
+
+    db.run(await statement("REOPEN_APPROVAL_STATUSES", SIMPLIFY_MIGRATION));
+
+    expect(statuses(db)).toEqual([
+      ["a", "draft"],
+      ["b", "draft"],
+      ["c", "draft"],
+      ["d", "draft"],
+      ["e", "sent"],
+      ["f", "accepted"],
+      ["g", "declined"],
+    ]);
+  });
+});

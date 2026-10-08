@@ -8,11 +8,11 @@
  * customers screen filters and totals without a round trip, and the numbers
  * are testable without a database.
  *
- * **Only one currency is ever added up.** An account is denominated in one
- * currency, but nothing stops a quote for them being written in another — a
- * price book in EUR, a one-off in GBP — and a pipeline figure that quietly
- * summed those would be a wrong number presented confidently. Quotes in
- * another currency are counted and reported as such, never added.
+ * **Only one currency is ever added up.** The app writes everything in one
+ * currency now, but a quote imported from before that may carry another, and
+ * a pipeline figure that quietly summed those would be a wrong number
+ * presented confidently. Quotes in another currency are counted and reported
+ * as such, never added.
  */
 import { percentBetween, round, sum } from "./money";
 import type {
@@ -27,16 +27,9 @@ import type {
 
 /**
  * Quotes still in play: nobody has said yes or no, and the clock has not run
- * out. `rejected` is in here because an approval that came back is a deal
- * still being worked, not a deal lost.
+ * out.
  */
-const OPEN_STATUSES: ReadonlySet<QuoteStatus> = new Set<QuoteStatus>([
-  "draft",
-  "in_review",
-  "approved",
-  "rejected",
-  "sent",
-]);
+const OPEN_STATUSES: ReadonlySet<QuoteStatus> = new Set<QuoteStatus>(["draft", "sent"]);
 
 /** Quotes the customer answered. `expired` is not one of them — see below. */
 const WON: QuoteStatus = "accepted";

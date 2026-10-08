@@ -1,14 +1,13 @@
 /**
- * The CPQ domain, shared by the server and the React UI.
+ * The estimating domain, shared by the server and the React UI.
  *
- * Five things are modelled here, and the order below is the order a quote
- * actually flows through them:
+ * Three things are modelled here, and the order below is the order an
+ * estimate actually flows through them:
  *
  *   product   — what is sold: a price, a cost, options, rules, tiers
- *   price book— what it costs this customer: per-product overrides in one currency
- *   line      — one product on one quote: quantity, options, discount, term
- *   rule      — pricing and approval policy, expressed as formulas
- *   quote     — the document: lines, totals, approvals, status, a customer
+ *   line      — one product on one quote: quantity, options, discount
+ *   quote     — the document: lines, totals, status, a customer, and the
+ *               markup, overhead and tax it was priced under
  *
  * Two conventions run through the whole file.
  *
@@ -27,10 +26,11 @@
 /* ------------------------------- currency -------------------------------- */
 
 /**
- * The currencies a price book may be denominated in. A closed list rather than
- * free text: the minor-unit count in `src/lib/money.ts` has to exist for every
- * one of them, and a quote whose currency nothing can round is worse than a
- * quote that could not be created.
+ * The currencies `src/lib/money.ts` knows how to round.
+ *
+ * The app itself works in one: `DEFAULT_CURRENCY`, which every quote, invoice
+ * and account is written in. The list stays because records carry a currency
+ * column and the rounding table is keyed by it.
  */
 export const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "SEK", "INR", "BRL"] as const;
 
@@ -123,11 +123,10 @@ export const UNIT_LABELS: Record<UnitOfMeasure, string> = {
  * What kind of money a catalogue item is.
  *
  * The standard five buckets a job is costed in, and the reason this exists
- * separately from `family` (which is free text the estimator chooses) and from
- * `chargeType` (which is about *when* it is billed): a job's cost report is
- * always broken down these five ways, whatever the estimator called the
- * families, and an approval rule that wants to watch subcontracted work needs
- * a field it can trust rather than a naming convention it has to hope for.
+ * separately from `family` (which is free text the estimator chooses): a
+ * job's cost report is always broken down these five ways, whatever the
+ * estimator called the families, and it needs a field it can trust rather
+ * than a naming convention it has to hope for.
  *
  * `material` is the default because it is the bulk of a catalogue and because
  * an item nobody classified is far more often a material than anything else.
@@ -279,34 +278,6 @@ export type CatalogProvenance = {
 /* -------------------------------- product -------------------------------- */
 
 /**
- * How an item is billed, which is what decides where its money lands in the
- * totals.
- *
- * `one-time` is nearly everything on a construction estimate: material
- * delivered, labour performed, a subcontract let. `recurring` is what is
- * rented — a lift on the job for four months, a temporary fence, a service
- * agreement after handover — and it bills per period for the length of the
- * term. `usage` is a unit-rate item quoted at an estimated quantity and
- * trued up against what was actually placed, which is how excavation and
- * concrete are very often written.
- */
-export type ChargeType = "one-time" | "recurring" | "usage";
-
-export const CHARGE_TYPES: ChargeType[] = ["one-time", "recurring", "usage"];
-
-/** How often a recurring charge is billed. Ignored for one-time products. */
-export type BillingPeriod = "monthly" | "quarterly" | "annual";
-
-export const BILLING_PERIODS: BillingPeriod[] = ["monthly", "quarterly", "annual"];
-
-/** Months in one billing period — the divisor behind every MRR figure. */
-export const BILLING_PERIOD_MONTHS: Record<BillingPeriod, number> = {
-  monthly: 1,
-  quarterly: 3,
-  annual: 12,
-};
-
-/**
  * One choice inside an option group.
  *
  * An option changes the line's unit price in one of two ways, and a group may
@@ -373,7 +344,7 @@ export type ProductRule = {
   then: string[];
   /**
    * `validate` only: a formula that must evaluate to a non-zero (true) number.
-   * Variables are `quantity`, `term`, and `option.<key>` as 1 or 0.
+   * Variables are `quantity`, `selectedCount`, and `option.<key>` as 1 or 0.
    */
   expression?: string;
   /** Shown to the person configuring the line when the rule fires. */
@@ -423,26 +394,24 @@ export type Product = {
   sku: string;
   name: string;
   description: string;
-  /** Free-text grouping — "Framing", "Roofing". Pricing rules can target it. */
+  /** Free-text grouping — "Framing", "Roofing". */
   family: string;
   /** Material, labour, equipment, subcontract — how a job's cost report adds it up. */
   costType: CostType;
-  chargeType: ChargeType;
-  /** Recurring items only — equipment rented by the month, a service agreement. */
-  billingPeriod: BillingPeriod;
-  /** The unit it is bought, measured and billed in. */
+  /**
+   * The unit it is bought, measured and billed in. Equipment rented by the
+   * day, week or month is an ordinary item in `DAY`, `WK` or `MO`.
+   */
   unitOfMeasure: UnitOfMeasure;
-  /** The catalogue price, in `currency`. A price book overrides it per customer. */
+  /**
+   * The sell price per unit. 0 means "price it from cost": the line sells at
+   * `cost` plus the estimate's markup, which is what keeps a supplier feed's
+   * cost update flowing through to the price without anyone retyping it.
+   */
   listPrice: number;
   /** What it costs to deliver one unit. Drives margin, and is never shown to a buyer. */
   cost: number;
-  currency: CurrencyCode;
   active: boolean;
-  minQuantity: number;
-  /** 0 means unbounded. */
-  maxQuantity: number;
-  /** The most an estimator may discount this line before approval is needed, 0-100. */
-  floorDiscountPercent: number;
   /**
    * How much more of this than the take-off measured you actually have to buy,
    * 0-100. Drywall gets cut to fit, tile breaks, lumber has crooked sticks in
@@ -471,228 +440,13 @@ export type Product = {
   rules: ProductRule[];
   components: BundleComponent[];
   volumeTiers: VolumeTier[];
-  /** Arbitrary catalogue metadata, rendered on proposals as a spec table. */
-  attributes: Record<string, string>;
   ownerId: string;
-  sharedWith: string[];
   createdAt: string;
   updatedAt: string;
 };
 
 /** True when the product pulls other products onto the quote with it. */
 export const isBundle = (product: Pick<Product, "components">) => product.components.length > 0;
-
-/* ------------------------------ price books ------------------------------ */
-
-/**
- * One product's price in one price book.
- *
- * `minPrice` is a hard floor: no discount, tier or pricing rule may take the
- * line's unit price below it. That is the difference between a price book and
- * a discount — a floor is a commitment the business made to itself.
- */
-export type PriceBookEntry = {
-  /** The product's SKU, not its id: a price book survives a catalogue re-import. */
-  sku: string;
-  unitPrice: number;
-  minPrice?: number | null;
-  active?: boolean;
-};
-
-export type PriceBook = {
-  id: string;
-  name: string;
-  description: string;
-  currency: CurrencyCode;
-  /** The book a new quote starts on when the account names none. */
-  isDefault: boolean;
-  active: boolean;
-  /** ISO dates. Empty means no bound. A quote outside the window is warned about. */
-  validFrom: string;
-  validTo: string;
-  entries: PriceBookEntry[];
-  ownerId: string;
-  sharedWith: string[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-/* ----------------------------- pricing rules ----------------------------- */
-
-/**
- * A pricing rule adjusts a line, or the quote as a whole, by formula.
- *
- * This is the escape hatch that stops a CPQ needing a code change for every
- * commercial policy: "20% off Platform above 500 seats", "add 8% uplift on
- * three-year terms", "cap Services at 15% of the software total". The formula
- * language is the one in `src/lib/formula.ts` — arithmetic, comparisons and
- * logic, parsed to an AST and evaluated by hand, so nothing here is `eval`.
- */
-export type PricingRuleScope = "line" | "quote";
-
-/**
- * What the rule's expression produces.
- *
- * - `unitPrice`       — replaces the unit price outright
- * - `discountPercent` — replaces the line or quote discount, 0-100
- * - `adjustment`      — an amount added to (or, negative, taken off) the net
- */
-export type PricingRuleTarget = "unitPrice" | "discountPercent" | "adjustment";
-
-export const PRICING_RULE_TARGETS: PricingRuleTarget[] = ["unitPrice", "discountPercent", "adjustment"];
-
-export type PricingRule = {
-  id: string;
-  name: string;
-  description: string;
-  scope: PricingRuleScope;
-  /**
-   * A formula that must be non-zero for the rule to fire. Empty means always.
-   * Line scope sees the line variables, quote scope the quote variables — both
-   * listed by `PRICING_VARIABLES` in src/lib/pricing.ts.
-   */
-  condition: string;
-  target: PricingRuleTarget;
-  /** The formula producing the new value, over the same variables. */
-  expression: string;
-  /** Line scope only: limit the rule to one family, or one SKU. Empty is "any". */
-  appliesToFamily: string;
-  appliesToSku: string;
-  /** Lowest first. Each rule sees the values the previous ones produced. */
-  priority: number;
-  active: boolean;
-  /** Shown on the line it changed, so a surprising price explains itself. */
-  message: string;
-  ownerId: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** What a rule did to one line or quote, kept so the UI can show its work. */
-export type AppliedRule = {
-  ruleId: string;
-  name: string;
-  target: PricingRuleTarget;
-  from: number;
-  to: number;
-  message: string;
-};
-
-/* ---------------------------- approval rules ----------------------------- */
-
-/**
- * The metric an approval rule watches.
- *
- * `custom` hands the decision to a formula instead, for policies no single
- * number expresses ("services above 20% of software needs the VP").
- */
-export type ApprovalMetric =
-  | "discountPercent"
-  | "marginPercent"
-  | "netTotal"
-  | "termMonths"
-  | "floorBreach"
-  | "custom";
-
-export const APPROVAL_METRICS: ApprovalMetric[] = [
-  "discountPercent",
-  "marginPercent",
-  "netTotal",
-  "termMonths",
-  "floorBreach",
-  "custom",
-];
-
-/** What each metric watches, for the rule editor and the API index. */
-export const APPROVAL_METRIC_LABELS: Record<ApprovalMetric, string> = {
-  discountPercent: "Effective discount off list, as a percentage",
-  marginPercent: "Margin, as a percentage of what is charged",
-  netTotal: "Value after every discount, before tax",
-  termMonths: "Subscription length in months",
-  floorBreach: "A line discounted past the ceiling its own product allows",
-  custom: "A formula you write, over the same variables the pricing rules use",
-};
-
-export type Comparator = ">" | ">=" | "<" | "<=" | "==";
-
-export const COMPARATORS: Comparator[] = [">", ">=", "<", "<=", "=="];
-
-export type ApprovalRule = {
-  id: string;
-  name: string;
-  /** `quote` weighs the whole document; `line` fires on any single line. */
-  scope: PricingRuleScope;
-  metric: ApprovalMetric;
-  comparator: Comparator;
-  threshold: number;
-  /** `custom` only: a formula that triggers the rule when non-zero. */
-  condition: string;
-  /** Ascending. A quote needs every level at or below the highest it triggers. */
-  level: number;
-  /**
-   * Everyone asked. They see the quote this rule fired on, and nothing else
-   * of yours.
-   */
-  approvers: string[];
-  /**
-   * How many of them must approve before this rule is satisfied.
-   *
-   * 1 is "any one of them" — a rota, where whoever is at their desk answers.
-   * `approvers.length` is "all of them" — a board, where everyone signs. The
-   * numbers in between are the interesting ones: two of your three regional
-   * directors, say.
-   */
-  approvalsRequired: number;
-  /**
-   * How many must reject before the quote comes back.
-   *
-   * Separate from `approvalsRequired` on purpose, and usually smaller: a deal
-   * that needs two yeses very often needs only one no. Setting both to 1 on a
-   * pair of approvers is "first answer wins", which is a real policy.
-   */
-  rejectionsRequired: number;
-  message: string;
-  active: boolean;
-  ownerId: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-/** One person's answer on one request. */
-export type ApprovalDecision = {
-  approverEmail: string;
-  decision: "approved" | "rejected";
-  decidedAt: string;
-  comment: string;
-};
-
-/**
- * One approval a quote is waiting on, or has already had.
- *
- * A request is addressed to everyone on its rule at once and keeps every
- * answer it has been given, rather than being a single yes/no. Its own
- * `status` is derived from those answers against the two quorums — see
- * `requestStatus` in src/lib/approvals.ts, which is the only place that
- * decision is made.
- */
-export type ApprovalRequest = {
-  id: string;
-  ruleId: string;
-  ruleName: string;
-  level: number;
-  /** Everyone this request is addressed to. */
-  approverEmails: string[];
-  approvalsRequired: number;
-  rejectionsRequired: number;
-  /** Why it triggered, in numbers: "Discount 32.0% > 25%". */
-  reason: string;
-  status: "pending" | "approved" | "rejected";
-  /** The line it fired on, for a line-scoped rule. */
-  lineId?: string | null;
-  /** Everyone who has answered so far, in the order they answered. */
-  decisions: ApprovalDecision[];
-  requestedAt: string;
-};
 
 /* -------------------------------- accounts ------------------------------- */
 
@@ -790,9 +544,8 @@ export type Account = {
    */
   shippingAddress: Address;
   shippingSameAsBilling: boolean;
+  /** Always `DEFAULT_CURRENCY`; kept because the column is. */
   currency: CurrencyCode;
-  /** The price book quotes for this customer start on. Empty uses the default book. */
-  priceBookId: string;
   /** "Net 30". Copied onto the quote and rendered on the proposal. */
   paymentTerms: string;
   /**
@@ -880,53 +633,29 @@ export const emptyCustomer = (): CustomerSnapshot => ({
 /**
  * Where a quote is in its life.
  *
- * `draft` → `in_review` (approvals outstanding) → `approved` → `sent` →
- * `accepted` / `declined`. `rejected` comes back from an approver and returns
- * the quote to the rep, and `expired` is what `validUntil` makes of a quote
- * nobody answered. The legal transitions live in `QUOTE_TRANSITIONS` below, so
- * the server and the UI agree on which buttons exist.
+ * `draft` → `sent` → `accepted` / `declined`, and `expired` is what
+ * `validUntil` makes of a quote nobody answered. The legal transitions live in
+ * `QUOTE_TRANSITIONS` below, so the server and the UI agree on which buttons
+ * exist.
  */
-export type QuoteStatus =
-  | "draft"
-  | "in_review"
-  | "approved"
-  | "rejected"
-  | "sent"
-  | "accepted"
-  | "declined"
-  | "expired";
+export type QuoteStatus = "draft" | "sent" | "accepted" | "declined" | "expired";
 
-export const QUOTE_STATUSES: QuoteStatus[] = [
-  "draft",
-  "in_review",
-  "approved",
-  "rejected",
-  "sent",
-  "accepted",
-  "declined",
-  "expired",
-];
+export const QUOTE_STATUSES: QuoteStatus[] = ["draft", "sent", "accepted", "declined", "expired"];
 
 /**
- * Which statuses each status may move to, by an explicit request.
- *
- * Two of them are not in here because they are not anybody's to request:
- * `in_review` and `approved` are decided by the approval engine when a quote
- * is submitted, and `expired` by the clock.
+ * Which statuses each status may move to, by an explicit request. `expired`
+ * is not in any list because it is the clock's to decide, not anybody's.
  */
 export const QUOTE_TRANSITIONS: Record<QuoteStatus, QuoteStatus[]> = {
   draft: ["sent"],
-  in_review: ["draft"],
-  approved: ["sent", "draft"],
-  rejected: ["draft"],
   sent: ["accepted", "declined", "draft"],
   accepted: [],
   declined: ["draft"],
   expired: ["draft"],
 };
 
-/** A quote may only be edited while it is still the rep's to edit. */
-export const isEditableStatus = (status: QuoteStatus) => status === "draft" || status === "rejected";
+/** A quote may only be edited while it is still a draft. */
+export const isEditableStatus = (status: QuoteStatus) => status === "draft";
 
 /**
  * One line as the person quoting entered it — everything the price is derived
@@ -940,7 +669,7 @@ export type QuoteLineInput = {
   quantity: number;
   /** A manual discount the estimator applied, 0-100. */
   discountPercent: number;
-  /** A negotiated unit price. `null` means "whatever the price book says". */
+  /** A negotiated unit price. `null` means "whatever the catalogue says". */
   unitPriceOverride: number | null;
   /**
    * This job's waste allowance for this line, 0-100, or `null` to use the
@@ -950,8 +679,6 @@ export type QuoteLineInput = {
   wastePercentOverride: number | null;
   /** Selected option keys, across every group on the product. */
   selectedOptions: string[];
-  /** Subscription length in months. Recurring lines only; 0 uses the quote's term. */
-  termMonths: number;
   /** An estimator's note that replaces the catalogue description on the proposal. */
   description: string;
   /** The bundle line this came from, if any. Component lines are not editable. */
@@ -963,8 +690,8 @@ export type QuoteLineInput = {
  * A line with its price worked out.
  *
  * Every intermediate number is kept rather than just the total, because the
- * question a CPQ is always asked is "why is it that price" — the UI walks
- * these fields to answer it, and `appliedRules` names what moved it.
+ * question an estimate is always asked is "why is it that price" — the UI
+ * walks these fields to answer it.
  */
 export type PricedLine = QuoteLineInput & {
   /* --- catalogue snapshot, as it was when this line was priced --- */
@@ -972,8 +699,6 @@ export type PricedLine = QuoteLineInput & {
   name: string;
   family: string;
   costType: CostType;
-  chargeType: ChargeType;
-  billingPeriod: BillingPeriod;
   unitOfMeasure: UnitOfMeasure;
   /** Names of the selected options, for display and for the proposal. */
   optionNames: string[];
@@ -996,26 +721,29 @@ export type PricedLine = QuoteLineInput & {
   wasteQuantity: number;
 
   /* --- the price, step by step --- */
-  /** The price book's price, or the product's list price when it has no entry. */
+  /**
+   * The product's list price — or, for an item with none, its cost plus the
+   * quote's markup.
+   */
   listUnitPrice: number;
+  /** True when `listUnitPrice` was worked out from cost and markup. */
+  pricedFromCost: boolean;
   /** What the selected options added to (or took off) one unit. */
   optionsUnitDelta: number;
-  /** After options and the volume tier, before discounts and rules. */
+  /** After options and the volume tier, before the discount. */
   baseUnitPrice: number;
   /** The tier the quantity landed in, or null when the product has no tiers. */
   tier: VolumeTier | null;
   /** What is actually charged per unit, after everything. */
   unitPrice: number;
-  /** `listUnitPrice` × quantity × periods — what it would cost undiscounted. */
+  /** `listUnitPrice` × quantity — what it would cost undiscounted. */
   listTotal: number;
   /** Everything taken off `listTotal`, as one number. */
   discountAmount: number;
-  /** What the customer pays for this line over the whole term. */
+  /** What the customer pays for this line. */
   netTotal: number;
   /** `discountAmount` as a percentage of `listTotal`. */
   effectiveDiscountPercent: number;
-  /** Billing periods this line is charged for; 1 for one-time products. */
-  periods: number;
 
   /* --- margin, never shown to a buyer --- */
   unitCost: number;
@@ -1023,14 +751,7 @@ export type PricedLine = QuoteLineInput & {
   margin: number;
   marginPercent: number;
 
-  /* --- revenue shape --- */
-  oneTime: number;
-  monthlyRecurring: number;
-  annualRecurring: number;
-
-  /* --- provenance --- */
-  appliedRules: AppliedRule[];
-  /** Configuration and floor problems. A quote with any of these cannot be sent. */
+  /** Configuration problems. A quote with any of these cannot be sent. */
   issues: string[];
   /** Advisory notes: a recommended option not taken, a tier just out of reach. */
   warnings: string[];
@@ -1041,34 +762,28 @@ export type QuoteTotals = {
   lineCount: number;
   /** Undiscounted value of every line. */
   listTotal: number;
-  /** Line-level discounts, tiers and rules. */
+  /** Line-level discounts and tiers. */
   lineDiscountAmount: number;
   /** After line discounts, before the quote-level discount. */
   subtotal: number;
   /** The whole-quote discount, in money. */
   quoteDiscountAmount: number;
   /**
-   * What quote-scoped pricing rules added or took off, as one amount. Kept
-   * apart from the discount because a surcharge is not a negative discount,
-   * and a totals panel that says so confuses everyone who reads it.
+   * The quote's overhead percentage of the discounted subtotal: the share of
+   * running the company — the yard, the trucks, the office — that this job
+   * carries. Its own line because a client reading the estimate should see it.
    */
-  quoteAdjustment: number;
-  /** After every discount and adjustment, before tax. */
+  overheadAmount: number;
+  /** After every discount, plus overhead, before tax. */
   netTotal: number;
   taxAmount: number;
   shipping: number;
   grandTotal: number;
-  /** `listTotal` − `netTotal`, over `listTotal`. The number an approver reads. */
+  /** What was taken off the lines' list value, over that list value. */
   effectiveDiscountPercent: number;
   costTotal: number;
   margin: number;
   marginPercent: number;
-  /* Revenue shape, which is what a subscription business actually reports. */
-  oneTimeTotal: number;
-  monthlyRecurringTotal: number;
-  annualRecurringTotal: number;
-  /** One-time charges plus the full recurring value of the term. */
-  totalContractValue: number;
 };
 
 export type Quote = {
@@ -1093,10 +808,17 @@ export type Quote = {
   /** Its name and number, snapshotted, so a list reads without a join. */
   projectName: string;
   customer: CustomerSnapshot;
-  priceBookId: string;
+  /** Always `DEFAULT_CURRENCY`; kept because the column is. */
   currency: CurrencyCode;
-  /** Default subscription length for recurring lines that name none. */
-  termMonths: number;
+  /**
+   * Added to cost to price any item that has no list price of its own, 0-1000.
+   * Copied from the settings when the quote is created and then the quote's
+   * own, like tax: changing the company's markup does not reprice an estimate
+   * that has already gone out.
+   */
+  markupPercent: number;
+  /** Overhead charged on the discounted subtotal, 0-100. Copied like markup. */
+  overheadPercent: number;
   /** A discount on the whole quote, applied after line discounts, 0-100. */
   discountPercent: number;
   taxPercent: number;
@@ -1108,9 +830,6 @@ export type Quote = {
   internalNotes: string;
   lines: PricedLine[];
   totals: QuoteTotals;
-  approvals: ApprovalRequest[];
-  /** Who the quote is waiting on, flattened for PocketBase's access rules. */
-  approverIds: string[];
   ownerId: string;
   sharedWith: string[];
   sentAt: string;
@@ -1120,9 +839,8 @@ export type Quote = {
 };
 
 /** A quote without its lines — what the list endpoint and the sidebar use. */
-export type QuoteSummary = Omit<Quote, "lines" | "approvals"> & {
+export type QuoteSummary = Omit<Quote, "lines"> & {
   lineCount: number;
-  pendingApprovals: number;
 };
 
 /* ------------------------------- templates ------------------------------- */
@@ -1473,7 +1191,7 @@ export const MATCH_KEY_LABELS: Record<MatchKey, string> = {
  *
  * This is the important half of the whole sync design. A feed owns the fields
  * you name here and **nothing else** — your waste factors, your option groups,
- * your assemblies, your margins and your discount ceilings are yours, and a
+ * your assemblies and your margins are yours, and a
  * supplier's spreadsheet may not touch them however many columns it has.
  *
  * `cost` and `price` are separate entries on purpose. Most trade feeds quote
@@ -1652,8 +1370,6 @@ export type SyncPolicy = {
   /** What a created item is filed under when the feed does not say. */
   defaultFamily: string;
   defaultCostType: CostType;
-  /** The currency the feed's numbers are in. */
-  currency: CurrencyCode;
 };
 
 export const DEFAULT_SYNC_POLICY: SyncPolicy = {
@@ -1665,7 +1381,6 @@ export const DEFAULT_SYNC_POLICY: SyncPolicy = {
   markupPercent: 0,
   defaultFamily: "",
   defaultCostType: "material",
-  currency: "USD",
 };
 
 /** What one sync run did, kept on the source so the last one is always visible. */

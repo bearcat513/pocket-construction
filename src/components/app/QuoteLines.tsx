@@ -1,6 +1,5 @@
-import { ChevronDown, ChevronRight, CornerDownRight, Settings2, Trash2, Wand2 } from "lucide-react";
+import { ChevronDown, ChevronRight, CornerDownRight, Settings2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, Tbody, Td, Th, Thead, Tr } from "@/components/ui/table";
@@ -38,7 +37,7 @@ export function QuoteLines({ priced, format, editable, showMargin, onChange, onC
   if (!priced.length) {
     return (
       <EmptyState title="Nothing on this quote yet">
-        Add a product to start pricing. Totals, approvals and the proposal all follow from the lines.
+        Add an item to start pricing. The totals and the proposal follow from the lines.
       </EmptyState>
     );
   }
@@ -98,17 +97,6 @@ export function QuoteLines({ priced, format, editable, showMargin, onChange, onC
                     {isComponent && <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />}
                     <span className="font-medium">{line.name}</span>
                     <span className="font-mono text-xs text-muted-foreground">{line.sku}</span>
-                    {line.chargeType === "recurring" && (
-                      <Badge tone="outline">
-                        {line.billingPeriod} · {line.termMonths}mo
-                      </Badge>
-                    )}
-                    {line.chargeType === "usage" && <Badge tone="outline">usage</Badge>}
-                    {line.appliedRules.length > 0 && (
-                      <Badge tone="info" title={line.appliedRules.map(rule => rule.name).join(", ")}>
-                        <Wand2 /> {line.appliedRules.length}
-                      </Badge>
-                    )}
                   </div>
                   {line.optionNames.length > 0 && (
                     <p className="text-xs text-muted-foreground">{line.optionNames.join(" · ")}</p>
@@ -228,7 +216,10 @@ export function QuoteLines({ priced, format, editable, showMargin, onChange, onC
                 <Td />
                 <Td colSpan={showMargin ? (editable ? 8 : 7) : editable ? 7 : 6}>
                   <dl className="grid gap-x-8 gap-y-1 text-xs sm:grid-cols-2">
-                    <Row label="Price book / list" value={format.money(line.listUnitPrice)} />
+                    <Row
+                      label={line.pricedFromCost ? "Cost + markup" : "List price"}
+                      value={format.money(line.listUnitPrice)}
+                    />
                     {line.optionsUnitDelta !== 0 && (
                       <Row label="Options" value={`${line.optionsUnitDelta > 0 ? "+" : ""}${format.money(line.optionsUnitDelta)}`} />
                     )}
@@ -247,35 +238,11 @@ export function QuoteLines({ priced, format, editable, showMargin, onChange, onC
                     {line.unitPriceOverride !== null && (
                       <Row label="Negotiated unit price" value={format.money(line.unitPriceOverride)} />
                     )}
-                    {line.appliedRules.map(rule => (
-                      <Row
-                        key={rule.ruleId}
-                        label={`Rule: ${rule.name}`}
-                        value={
-                          rule.target === "discountPercent"
-                            ? `discount ${format.percent(rule.from)} → ${format.percent(rule.to)}`
-                            : rule.target === "unitPrice"
-                              ? `${format.money(rule.from)} → ${format.money(rule.to)}`
-                              : `${format.money(rule.to - rule.from)} adjustment`
-                        }
-                      />
-                    ))}
                     <Row label="Charged per unit" value={format.money(line.unitPrice)} />
-                    <Row
-                      label="Billing periods"
-                      value={
-                        line.chargeType === "recurring"
-                          ? `${line.periods} × ${line.billingPeriod} over ${line.termMonths} months`
-                          : "once"
-                      }
-                    />
                     <Row label="At list" value={format.money(line.listTotal)} />
                     <Row label="Discount" value={`−${format.money(line.discountAmount)} (${format.percent(line.effectiveDiscountPercent)})`} />
                     {showMargin && <Row label="Cost" value={format.money(line.costTotal)} />}
                     {showMargin && <Row label="Margin" value={`${format.money(line.margin)} (${format.percent(line.marginPercent)})`} />}
-                    {line.chargeType === "recurring" && (
-                      <Row label="Monthly recurring" value={format.money(line.monthlyRecurring)} />
-                    )}
                   </dl>
                 </Td>
               </Tr>

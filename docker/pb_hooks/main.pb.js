@@ -11,7 +11,6 @@ const MODULES = [
   "setup/superuser.js",
   "setup/adopt.js",
   "rules/ownership.js",
-  "rules/approvals.js",
   "rules/site.js",
   "share/routes.js",
   "keys/routes.js",

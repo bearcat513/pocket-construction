@@ -2,11 +2,11 @@
  * The people you can pick from.
  *
  * Until now this app deliberately had no directory: an address could be
- * *resolved* — sharing and approver stamping look up what you typed and say
- * whether an account exists — but never *listed*. That works when you already
- * know the address. It does not work for an approval rule, where the question
- * is "who on this instance can sign this off", and the honest answer was an
- * empty dropdown next to ten accounts.
+ * *resolved* — sharing looks up what you typed and says whether an account
+ * exists — but never *listed*. That works when you already know the address.
+ * It does not work for a picker, where the question is "who on this instance
+ * is there", and the honest answer was an empty dropdown next to ten
+ * accounts.
  *
  * So there is a directory now, and it is worth being clear about what that
  * changes: **any signed-in account can see the address and name of every other

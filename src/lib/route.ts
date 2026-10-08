@@ -15,10 +15,8 @@
 export type View =
   | "projects"
   | "quotes"
-  | "approvals"
   | "receivables"
   | "catalog"
-  | "rules"
   | "customers"
   | "templates"
   | "website"
@@ -36,10 +34,8 @@ export type Route = {
 const SEGMENTS: Record<View, string> = {
   projects: "projects",
   quotes: "estimates",
-  approvals: "approvals",
   receivables: "receivables",
   catalog: "materials",
-  rules: "rules",
   customers: "clients",
   templates: "templates",
   website: "website",
@@ -53,8 +49,18 @@ const WITH_ID = new Set<View>(["projects", "quotes", "receivables", "customers",
 
 export const HOME: Route = { view: "projects" };
 
+/**
+ * Screens that are gone, and where their bookmarks land instead. Rules became
+ * the markup, overhead and tax under settings; approvals went with them.
+ */
+const RETIRED: Record<string, Route> = {
+  rules: { view: "settings", id: "documents" },
+  approvals: { view: "quotes" },
+};
+
 export function parseRoute(pathname: string): Route {
   const [segment = "", id = ""] = pathname.split("/").filter(Boolean).map(part => decodeURIComponent(part));
+  if (RETIRED[segment]) return RETIRED[segment];
   const view = VIEWS.get(segment);
   if (!view) return HOME;
   return id && WITH_ID.has(view) ? { view, id } : { view };

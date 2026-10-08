@@ -1,19 +1,18 @@
 /**
  * Storage, backed by PocketBase.
  *
- * Seven collections — `accounts`, `products`, `price_books`, `pricing_rules`,
- * `approval_rules`, `quotes`, `proposal_templates` — defined in
+ * The collections — `accounts`, `products`, `quotes`, `proposal_templates`,
+ * `projects`, `catalog_sources`, `invoices` and their ledger — are defined in
  * docker/pb_migrations/.
  *
  * Every function takes the caller's token and does its work as that user.
  * Nothing here filters by owner: the collection rules do that inside
  * PocketBase, so a missing `WHERE` in this file cannot leak another account's
- * records. A product or price book shared with the caller comes back from a
- * read and is refused by a write, for the same reason, and a quote awaiting
- * someone's approval is readable by that approver and by nobody else new.
+ * records. A quote or template shared with the caller comes back from a read
+ * and is refused by a write, for the same reason.
  *
  * Record ids are minted here rather than by PocketBase, so they stay readable
- * and type-tagged — `prd_…`, `pb_…`, `qte_…` — in the REST API, in exported
+ * and type-tagged — `prd_…`, `qte_…` — in the REST API, in exported
  * files and in the UI. The migration widens PocketBase's fixed-length id
  * field to allow them.
  */
@@ -24,7 +23,6 @@ import { asUnit } from "../lib/units";
 import type {
   Account,
   AccountContact,
-  ApprovalDecision,
   CatalogSource,
   Invoice,
   InvoiceCredit,
@@ -32,11 +30,7 @@ import type {
   InvoicePayment,
   InvoiceSummary,
   InvoiceTotals,
-  ApprovalRequest,
-  ApprovalRule,
-  PriceBook,
   PricedLine,
-  PricingRule,
   Product,
   Project,
   ProposalTemplate,
@@ -53,9 +47,6 @@ import type {
   CatalogSourceInput,
   CreditInput,
   PaymentInput,
-  ApprovalRuleInput,
-  PriceBookInput,
-  PricingRuleInput,
   ProductInput,
   ProjectInput,
   ProposalTemplateInput,
@@ -172,88 +163,18 @@ function toProduct(row: Record_): Product {
     // A real column, because the materials list filters on it and a job cost
     // report groups by it.
     costType: (row.costType ?? definition.costType ?? "material") as Product["costType"],
-    chargeType: (definition.chargeType ?? "one-time") as Product["chargeType"],
-    billingPeriod: (definition.billingPeriod ?? "monthly") as Product["billingPeriod"],
     unitOfMeasure: asUnit(definition.unitOfMeasure),
     listPrice: Number(row.listPrice ?? 0),
     cost: Number(row.cost ?? 0),
-    currency: asCurrency(row.currency),
     active: row.active !== false,
-    minQuantity: Number(definition.minQuantity ?? 1),
-    maxQuantity: Number(definition.maxQuantity ?? 0),
-    floorDiscountPercent: Number(definition.floorDiscountPercent ?? 0),
     optionGroups: definition.optionGroups ?? [],
     rules: definition.rules ?? [],
     components: definition.components ?? [],
     volumeTiers: definition.volumeTiers ?? [],
-    attributes: definition.attributes ?? {},
     wasteFactorPercent: Number(definition.wasteFactorPercent ?? 0),
     purchaseMultiple: Number(definition.purchaseMultiple ?? 0),
     material: { ...EMPTY_MATERIAL, ...(definition.material ?? {}) },
     provenance: definition.provenance ?? null,
-    ...ownership(row),
-    ...stamps(row),
-  };
-}
-
-function toPriceBook(row: Record_): PriceBook {
-  return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    description: String(row.description ?? ""),
-    currency: asCurrency(row.currency),
-    isDefault: row.isDefault === true,
-    active: row.active !== false,
-    validFrom: String(row.validFrom ?? ""),
-    validTo: String(row.validTo ?? ""),
-    entries: jsonArray(row.entries),
-    ...ownership(row),
-    ...stamps(row),
-  };
-}
-
-function toPricingRule(row: Record_): PricingRule {
-  const definition = jsonObject<Partial<PricingRule>>(row.definition, {});
-  return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    description: definition.description ?? "",
-    scope: (definition.scope ?? "line") as PricingRule["scope"],
-    condition: definition.condition ?? "",
-    target: (definition.target ?? "discountPercent") as PricingRule["target"],
-    expression: definition.expression ?? "",
-    appliesToFamily: definition.appliesToFamily ?? "",
-    appliesToSku: definition.appliesToSku ?? "",
-    priority: Number(row.priority ?? 100),
-    active: row.active !== false,
-    message: definition.message ?? "",
-    ownerId: relationId(row.owner),
-    ...stamps(row),
-  };
-}
-
-function toApprovalRule(row: Record_): ApprovalRule {
-  const definition = jsonObject<Partial<ApprovalRule>>(row.definition, {});
-  return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    scope: (definition.scope ?? "quote") as ApprovalRule["scope"],
-    metric: (definition.metric ?? "discountPercent") as ApprovalRule["metric"],
-    comparator: (definition.comparator ?? ">") as ApprovalRule["comparator"],
-    threshold: Number(definition.threshold ?? 0),
-    condition: definition.condition ?? "",
-    level: Number(row.level ?? 1),
-    // `approverEmail` was the single-approver column this collection started
-    // with; a record written before the quorum migration still reads.
-    approvers: Array.isArray(definition.approvers)
-      ? definition.approvers.map(String)
-      : row.approverEmail
-        ? [String(row.approverEmail)]
-        : [],
-    approvalsRequired: Number(definition.approvalsRequired ?? 1),
-    rejectionsRequired: Number(definition.rejectionsRequired ?? 1),
-    message: definition.message ?? "",
-    active: row.active !== false,
     ownerId: relationId(row.owner),
     ...stamps(row),
   };
@@ -297,7 +218,6 @@ function toAccount(row: Record_): Account {
     shippingAddress: shippingSameAsBilling ? { ...billingAddress } : (details.shippingAddress ?? { ...EMPTY_ADDRESS }),
     shippingSameAsBilling,
     currency: asCurrency(row.currency),
-    priceBookId: relationId(row.priceBook),
     paymentTerms: details.paymentTerms ?? "",
     // Seeded from the terms text for a row written before receivables, the
     // same way the validator does it for a body from the same era.
@@ -328,49 +248,12 @@ function toProposalTemplate(row: Record_): ProposalTemplate {
 }
 
 /**
- * An approval request as stored, upgraded if it predates multiple approvers.
- *
- * A quote sitting in review when this changed still has to open, and its
- * single `approverEmail` plus `decidedBy` is enough to rebuild the newer
- * shape exactly.
+ * A stored status, as one this app still has. The approval statuses were
+ * moved back to draft by 1750000014_simplify.js; a row that somehow still
+ * carries one reads as a draft too, rather than as a status nothing handles.
  */
-function toApprovalRequest(raw: unknown): ApprovalRequest {
-  const input = jsonObject<Record_>(raw, {});
-
-  const emails = Array.isArray(input.approverEmails)
-    ? input.approverEmails.map(String)
-    : input.approverEmail
-      ? [String(input.approverEmail)]
-      : [];
-
-  const decisions: ApprovalDecision[] = Array.isArray(input.decisions)
-    ? (input.decisions as ApprovalDecision[])
-    : input.decidedBy
-      ? [
-          {
-            approverEmail: String(input.decidedBy),
-            decision: input.status === "rejected" ? "rejected" : "approved",
-            decidedAt: String(input.decidedAt ?? ""),
-            comment: String(input.comment ?? ""),
-          },
-        ]
-      : [];
-
-  return {
-    id: String(input.id ?? ""),
-    ruleId: String(input.ruleId ?? ""),
-    ruleName: String(input.ruleName ?? ""),
-    level: Number(input.level ?? 1),
-    approverEmails: emails,
-    approvalsRequired: Number(input.approvalsRequired ?? 1),
-    rejectionsRequired: Number(input.rejectionsRequired ?? 1),
-    reason: String(input.reason ?? ""),
-    status: (String(input.status ?? "pending") || "pending") as ApprovalRequest["status"],
-    lineId: (input.lineId as string | null) ?? null,
-    decisions,
-    requestedAt: String(input.requestedAt ?? ""),
-  };
-}
+const quoteStatus = (value: unknown): QuoteStatus =>
+  (QUOTE_STATUSES as string[]).includes(String(value)) ? (String(value) as QuoteStatus) : "draft";
 
 function toQuote(row: Record_): Quote {
   const header = jsonObject<Partial<Quote>>(row.header, {});
@@ -378,7 +261,7 @@ function toQuote(row: Record_): Quote {
     id: String(row.id),
     number: String(row.number ?? ""),
     name: String(row.name ?? ""),
-    status: (String(row.status ?? "draft") || "draft") as QuoteStatus,
+    status: quoteStatus(row.status),
     version: Number(row.version ?? 1),
     supersedesId: relationId(row.supersedes) || null,
     projectId: relationId(row.project),
@@ -387,9 +270,11 @@ function toQuote(row: Record_): Quote {
     // quote written before shipping addresses existed has a header with
     // fewer keys, and everything downstream reads the fields unguarded.
     customer: { ...emptyCustomer(), ...(header.customer ?? {}) },
-    priceBookId: relationId(row.priceBook),
     currency: asCurrency(row.currency),
-    termMonths: Number(header.termMonths ?? 0),
+    // Zero for a quote written before markup and overhead existed, which is
+    // what it was priced under.
+    markupPercent: Number(header.markupPercent ?? 0),
+    overheadPercent: Number(header.overheadPercent ?? 0),
     discountPercent: Number(header.discountPercent ?? 0),
     taxPercent: Number(header.taxPercent ?? 0),
     shipping: Number(header.shipping ?? 0),
@@ -398,8 +283,6 @@ function toQuote(row: Record_): Quote {
     internalNotes: header.internalNotes ?? "",
     lines: jsonArray<PricedLine>(row.lines),
     totals: jsonObject<QuoteTotals>(row.totals, {} as QuoteTotals),
-    approvals: jsonArray<unknown>(row.approvals).map(toApprovalRequest),
-    approverIds: relationIds(row.approvers),
     ownerId: relationId(row.owner),
     sharedWith: relationIds(row.sharedWith),
     sentAt: toIso(row.sentAt),
@@ -410,13 +293,8 @@ function toQuote(row: Record_): Quote {
 
 /** The list view: everything but the lines, which are the bulk of a quote. */
 function toQuoteSummary(row: Record_): QuoteSummary {
-  const quote = toQuote(row);
-  const { lines, approvals, ...rest } = quote;
-  return {
-    ...rest,
-    lineCount: Number(row.lineCount ?? lines.length),
-    pendingApprovals: approvals.filter(request => request.status === "pending").length,
-  };
+  const { lines, ...rest } = toQuote(row);
+  return { ...rest, lineCount: Number(row.lineCount ?? lines.length) };
 }
 
 /* -------------------------------- products ------------------------------- */
@@ -442,20 +320,13 @@ const productBody = (input: ProductInput): Record_ => ({
   manufacturer: input.material.manufacturer,
   listPrice: input.listPrice,
   cost: input.cost,
-  currency: input.currency,
   active: input.active,
   definition: {
-    chargeType: input.chargeType,
-    billingPeriod: input.billingPeriod,
     unitOfMeasure: input.unitOfMeasure,
-    minQuantity: input.minQuantity,
-    maxQuantity: input.maxQuantity,
-    floorDiscountPercent: input.floorDiscountPercent,
     optionGroups: input.optionGroups,
     rules: input.rules,
     components: input.components,
     volumeTiers: input.volumeTiers,
-    attributes: input.attributes,
     wasteFactorPercent: input.wasteFactorPercent,
     purchaseMultiple: input.purchaseMultiple,
     material: input.material,
@@ -483,118 +354,6 @@ export async function updateProduct(token: string, id: string, input: ProductInp
 
 export const deleteProduct = (token: string, id: string) => remove(token, "products", id);
 
-/* ------------------------------ price books ------------------------------ */
-
-const priceBookBody = (input: PriceBookInput): Record_ => ({
-  name: input.name,
-  description: input.description,
-  currency: input.currency,
-  isDefault: input.isDefault,
-  active: input.active,
-  validFrom: input.validFrom,
-  validTo: input.validTo,
-  entries: input.entries,
-});
-
-export const listPriceBooks = async (token: string): Promise<PriceBook[]> =>
-  (await readMany(token, "price_books", { limit: 0, sort: "-isDefault,name" })).map(toPriceBook);
-
-export async function getPriceBook(token: string, id: string): Promise<PriceBook | null> {
-  const row = await readOne(token, "price_books", id);
-  return row ? toPriceBook(row) : null;
-}
-
-export async function createPriceBook(token: string, input: PriceBookInput): Promise<PriceBook> {
-  const row = await write(token, "price_books", null, { id: newId("pb"), ...priceBookBody(input) }, "Could not save the price book");
-  return toPriceBook(row!);
-}
-
-export async function updatePriceBook(token: string, id: string, input: PriceBookInput): Promise<PriceBook | null> {
-  const row = await write(token, "price_books", id, priceBookBody(input), "Could not update the price book");
-  return row ? toPriceBook(row) : null;
-}
-
-export const deletePriceBook = (token: string, id: string) => remove(token, "price_books", id);
-
-/* ----------------------------- pricing rules ----------------------------- */
-
-const pricingRuleBody = (input: PricingRuleInput): Record_ => ({
-  name: input.name,
-  priority: input.priority,
-  active: input.active,
-  definition: {
-    description: input.description,
-    scope: input.scope,
-    condition: input.condition,
-    target: input.target,
-    expression: input.expression,
-    appliesToFamily: input.appliesToFamily,
-    appliesToSku: input.appliesToSku,
-    message: input.message,
-  },
-});
-
-export const listPricingRules = async (token: string): Promise<PricingRule[]> =>
-  (await readMany(token, "pricing_rules", { limit: 0, sort: "priority,name" })).map(toPricingRule);
-
-export async function getPricingRule(token: string, id: string): Promise<PricingRule | null> {
-  const row = await readOne(token, "pricing_rules", id);
-  return row ? toPricingRule(row) : null;
-}
-
-export async function createPricingRule(token: string, input: PricingRuleInput): Promise<PricingRule> {
-  const row = await write(token, "pricing_rules", null, { id: newId("prc"), ...pricingRuleBody(input) }, "Could not save the pricing rule");
-  return toPricingRule(row!);
-}
-
-export async function updatePricingRule(token: string, id: string, input: PricingRuleInput): Promise<PricingRule | null> {
-  const row = await write(token, "pricing_rules", id, pricingRuleBody(input), "Could not update the pricing rule");
-  return row ? toPricingRule(row) : null;
-}
-
-export const deletePricingRule = (token: string, id: string) => remove(token, "pricing_rules", id);
-
-/* ---------------------------- approval rules ----------------------------- */
-
-const approvalRuleBody = (input: ApprovalRuleInput): Record_ => ({
-  name: input.name,
-  level: input.level,
-  active: input.active,
-  definition: {
-    scope: input.scope,
-    metric: input.metric,
-    comparator: input.comparator,
-    threshold: input.threshold,
-    condition: input.condition,
-    message: input.message,
-    // The approver list is not something the database queries on, so it lives
-    // in the definition with the rest of the rule rather than in a column.
-    approvers: input.approvers,
-    approvalsRequired: input.approvalsRequired,
-    rejectionsRequired: input.rejectionsRequired,
-  },
-});
-
-export const listApprovalRules = async (token: string): Promise<ApprovalRule[]> =>
-  (await readMany(token, "approval_rules", { limit: 0, sort: "level,name" })).map(toApprovalRule);
-
-export async function getApprovalRule(token: string, id: string): Promise<ApprovalRule | null> {
-  const row = await readOne(token, "approval_rules", id);
-  return row ? toApprovalRule(row) : null;
-}
-
-export async function createApprovalRule(token: string, input: ApprovalRuleInput): Promise<ApprovalRule> {
-  const row = await write(token, "approval_rules", null, { id: newId("apv"), ...approvalRuleBody(input) }, "Could not save the approval rule");
-  return toApprovalRule(row!);
-}
-
-export async function updateApprovalRule(token: string, id: string, input: ApprovalRuleInput): Promise<ApprovalRule | null> {
-  const row = await write(token, "approval_rules", id, approvalRuleBody(input), "Could not update the approval rule");
-  return row ? toApprovalRule(row) : null;
-}
-
-export const deleteApprovalRule = (token: string, id: string) => remove(token, "approval_rules", id);
-
 /* -------------------------------- accounts ------------------------------- */
 
 const accountBody = (input: AccountInput): Record_ => ({
@@ -603,8 +362,6 @@ const accountBody = (input: AccountInput): Record_ => ({
   // outside the app would mean by "the account's email".
   contactEmail: primaryContact(input)?.email ?? "",
   currency: input.currency,
-  // PocketBase wants "" for an unset relation, not null.
-  priceBook: input.priceBookId || "",
   details: {
     industry: input.industry,
     website: input.website,
@@ -825,9 +582,9 @@ export const deleteProposalTemplate = (token: string, id: string) => remove(toke
 
 /* --------------------------------- quotes -------------------------------- */
 
-/** Everything but `lines`, `totals` and `approvals` — the bulk of a quote. */
+/** Everything but `lines` — the bulk of a quote. */
 const QUOTE_SUMMARY_FIELDS =
-  "id,number,name,status,version,supersedes,project,priceBook,currency,validUntil,header,totals,approvals,approvers,owner,sharedWith,sentAt,decidedAt,created,updated,lineCount";
+  "id,number,name,status,version,supersedes,project,currency,validUntil,header,totals,owner,sharedWith,sentAt,decidedAt,created,updated,lineCount";
 
 export type QuoteRecordInput = {
   number: string;
@@ -838,9 +595,9 @@ export type QuoteRecordInput = {
   projectId: string;
   projectName: string;
   customer: Quote["customer"];
-  priceBookId: string;
   currency: Quote["currency"];
-  termMonths: number;
+  markupPercent: number;
+  overheadPercent: number;
   discountPercent: number;
   taxPercent: number;
   shipping: number;
@@ -849,9 +606,6 @@ export type QuoteRecordInput = {
   internalNotes: string;
   lines: PricedLine[];
   totals: QuoteTotals;
-  approvals: ApprovalRequest[];
-  /** User ids the approval engine resolved — what the read rule matches on. */
-  approverIds: string[];
   sentAt?: string;
   decidedAt?: string;
 };
@@ -874,18 +628,16 @@ function quoteBody(input: QuoteRecordInput): Record_ {
     supersedes: input.supersedesId ?? "",
     // A column, so "everything on this job" is a query rather than a scan.
     project: input.projectId || "",
-    priceBook: input.priceBookId || "",
     currency: input.currency,
     validUntil: input.validUntil,
     lineCount: input.lines.length,
     lines: input.lines,
     totals: input.totals,
-    approvals: input.approvals,
-    approvers: input.approverIds,
     header: {
       customer: input.customer,
       projectName: input.projectName,
-      termMonths: input.termMonths,
+      markupPercent: input.markupPercent,
+      overheadPercent: input.overheadPercent,
       discountPercent: input.discountPercent,
       taxPercent: input.taxPercent,
       shipping: input.shipping,
@@ -983,17 +735,6 @@ export const listQuotesForProject = async (token: string, projectId: string): Pr
     })
   ).map(toQuoteSummary);
 
-/** Quotes waiting on this caller, for the approvals queue. */
-export const listQuotesAwaiting = async (token: string, userId: string): Promise<QuoteSummary[]> =>
-  (
-    await readMany(token, "quotes", {
-      limit: 0,
-      sort: "-updated",
-      fields: QUOTE_SUMMARY_FIELDS,
-      filter: `status = "in_review" && approvers.id ?= "${userId.replace(/"/g, "")}"`,
-    })
-  ).map(toQuoteSummary);
-
 export async function getQuote(token: string, id: string): Promise<Quote | null> {
   const row = await readOne(token, "quotes", id);
   return row ? toQuote(row) : null;
@@ -1065,7 +806,6 @@ export async function databaseMeta(token: string) {
       ...status,
       accounts: null,
       products: null,
-      priceBooks: null,
       quotes: null,
       invoices: null,
       proposalTemplates: null,
@@ -1073,15 +813,14 @@ export async function databaseMeta(token: string) {
   }
 
   try {
-    const [accounts, products, priceBooks, quotes, invoices, proposalTemplates] = await Promise.all([
+    const [accounts, products, quotes, invoices, proposalTemplates] = await Promise.all([
       countRecords(token, "accounts"),
       countRecords(token, "products"),
-      countRecords(token, "price_books"),
       countRecords(token, "quotes"),
       countRecords(token, "invoices"),
       countRecords(token, "proposal_templates"),
     ]);
-    return { ...status, accounts, products, priceBooks, quotes, invoices, proposalTemplates };
+    return { ...status, accounts, products, quotes, invoices, proposalTemplates };
   } catch (error) {
     throw toApiError(error, "Could not read the record counts");
   }

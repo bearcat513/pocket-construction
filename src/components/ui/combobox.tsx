@@ -21,7 +21,7 @@ type Props = {
    * Lets a value that is not in the list stand.
    *
    * On for the catalogue references, because the formats behind them allow a
-   * dangling one: a price book may legitimately price a SKU this workspace has
+   * dangling one: an assembly may legitimately name a SKU this workspace has
    * not created yet, and the importer warns about that rather than refusing
    * it. Turning it off here would make the UI stricter than the file format.
    */
@@ -36,7 +36,7 @@ type Props = {
 /**
  * A searchable dropdown for a field that names another record.
  *
- * Anywhere this app asks for a SKU, a family or an approver, it is asking
+ * Anywhere this app asks for a SKU, a family or a person, it is asking
  * which *existing thing* you mean — and a bare text box answers that question
  * with a typo. A SKU typed into a bundle that does not match a product does
  * not fail; the component is quietly skipped when the bundle is expanded, so
@@ -48,7 +48,7 @@ type Props = {
  * Every form in this app lives in a side panel that scrolls (`ui/sheet.tsx`).
  * A dropdown positioned inside that panel gets clipped by its `overflow-y-auto`
  * the moment the field is near the bottom — which is exactly where the
- * repeated rows (bundle components, price book entries) are. So the list is
+ * repeated rows (bundle components, feed column mappings) are. So the list is
  * portalled to `document.body` and positioned against the trigger's rectangle,
  * recomputed on scroll and resize.
  *
@@ -332,7 +332,7 @@ export function Combobox({
 
 /* ------------------------------- shared lists ----------------------------- */
 
-/** Every product, as options keyed by SKU — what a bundle or a price book names. */
+/** Every product, as options keyed by SKU — what a bundle names. */
 export function productOptions(
   products: { sku: string; name: string; active: boolean; components?: unknown[] }[],
 ): ComboboxOption[] {

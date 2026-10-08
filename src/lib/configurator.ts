@@ -1,5 +1,5 @@
 /**
- * The "C" in CPQ: deciding whether a set of chosen options is a product the
+ * The configurator: deciding whether a set of chosen options is a product the
  * business is willing to sell, and what those choices do to the price.
  *
  * Two things live here, and keeping them together is deliberate — the price
@@ -43,7 +43,6 @@ export type ConfigurationResult = {
 export type ConfigurationInput = {
   selectedOptions: string[];
   quantity: number;
-  termMonths: number;
 };
 
 /* ------------------------------- lookups -------------------------------- */
@@ -103,7 +102,7 @@ const triggered = (rule: ProductRule, selected: Set<string>) =>
  * of it.
  */
 export function validateConfiguration(
-  product: Pick<Product, "optionGroups" | "rules" | "minQuantity" | "maxQuantity" | "name">,
+  product: Pick<Product, "optionGroups" | "rules" | "name">,
   input: ConfigurationInput,
   currency: CurrencyCode = "USD",
 ): ConfigurationResult {
@@ -158,21 +157,6 @@ export function validateConfiguration(
   const quantity = input.quantity;
   if (!Number.isFinite(quantity) || quantity <= 0) {
     issues.push({ severity: "error", source: "Quantity", message: "Quantity must be greater than zero." });
-  } else {
-    if (product.minQuantity > 0 && quantity < product.minQuantity) {
-      issues.push({
-        severity: "error",
-        source: "Quantity",
-        message: `${product.name} has a minimum of ${product.minQuantity}.`,
-      });
-    }
-    if (product.maxQuantity > 0 && quantity > product.maxQuantity) {
-      issues.push({
-        severity: "error",
-        source: "Quantity",
-        message: `${product.name} has a maximum of ${product.maxQuantity}.`,
-      });
-    }
   }
 
   /* --- product rules --- */
@@ -181,8 +165,6 @@ export function validateConfiguration(
   // formula can weigh a choice without knowing whether it was offered.
   const variables: Record<string, number> = {
     quantity: Number.isFinite(quantity) ? quantity : 0,
-    term: input.termMonths,
-    termMonths: input.termMonths,
     selectedCount: chosen.size,
   };
   for (const key of index.keys()) variables[`option.${key}`] = chosen.has(key) ? 1 : 0;

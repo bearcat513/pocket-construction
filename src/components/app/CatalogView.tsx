@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from "react";
 import {
-  BookOpen,
   Download,
   FileSpreadsheet,
   FileUp,
@@ -22,11 +21,12 @@ import { EmptyState, Section, formatters } from "./common";
 import { useFeedback } from "./feedback";
 import { CatalogSourceEditor } from "./CatalogSourceEditor";
 import { CatalogTemplatesDialog } from "./CatalogTemplatesDialog";
-import { PriceBookEditor } from "./PriceBookEditor";
 import { ProductEditor } from "./ProductEditor";
 import { SyncPlanDialog } from "./SyncPlanDialog";
 import { api, type Shareable, type SyncResult } from "@/lib/api";
 import type { Preferences } from "@/lib/preferences";
+import { sellPrice } from "@/lib/pricing";
+import { DEFAULT_CURRENCY } from "@/lib/money";
 import {
   COST_TYPE_LABELS,
   COST_TYPES,
@@ -35,15 +35,13 @@ import {
   divisionLabel,
   type CatalogSource,
   type CostType,
-  type PriceBook,
   type Product,
 } from "@/lib/types";
-import type { CatalogSourceInput, PriceBookInput, ProductInput } from "@/lib/validate";
+import type { CatalogSourceInput, ProductInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
 
 type Props = {
   products: Product[];
-  priceBooks: PriceBook[];
   catalogSources: CatalogSource[];
   preferences: Preferences;
   myId: string;
@@ -55,11 +53,16 @@ type Props = {
 
 type MaterialSort = "name" | "division" | "costType" | "listPrice" | "margin";
 
-const marginOf = (product: Product) =>
-  product.listPrice ? ((product.listPrice - product.cost) / product.listPrice) * 100 : 0;
+/** What an item sells for: its list price, or its cost plus the company markup. */
+const priceOf = (product: Product, markupPercent: number) => sellPrice(product, markupPercent, DEFAULT_CURRENCY).price;
+
+const marginOf = (product: Product, markupPercent: number) => {
+  const price = priceOf(product, markupPercent);
+  return price ? ((price - product.cost) / price) * 100 : 0;
+};
 
 /** What each sortable column sorts by. */
-function materialValue(product: Product, key: MaterialSort): string | number {
+function materialValue(product: Product, key: MaterialSort, markupPercent: number): string | number {
   switch (key) {
     case "name":
       return product.name;
@@ -68,9 +71,9 @@ function materialValue(product: Product, key: MaterialSort): string | number {
     case "costType":
       return COST_TYPE_LABELS[product.costType];
     case "listPrice":
-      return product.listPrice;
+      return priceOf(product, markupPercent);
     case "margin":
-      return marginOf(product);
+      return marginOf(product, markupPercent);
   }
 }
 
@@ -78,23 +81,21 @@ function materialValue(product: Product, key: MaterialSort): string | number {
  * The catalogue: what a job is built out of, what it costs, and where those
  * costs come from.
  *
- * Three things on one screen because they are maintained together — an item
- * needs a price, a price book is meaningless without the items it prices, and
- * a supplier feed is how both of them stop being a year out of date.
+ * Two things on one screen because they are maintained together — an item
+ * needs a cost and a price, and a supplier feed is how they stop being a year
+ * out of date.
  */
 export function CatalogView(props: Props) {
   const { preferences, myId } = props;
   const { pending, removeWithUndo } = useFeedback();
   // Anything waiting out its undo window is already gone as far as the screen is concerned.
   const products = useMemo(() => props.products.filter(entry => !pending.has(entry.id)), [props.products, pending]);
-  const priceBooks = useMemo(() => props.priceBooks.filter(entry => !pending.has(entry.id)), [props.priceBooks, pending]);
   const catalogSources = useMemo(
     () => props.catalogSources.filter(entry => !pending.has(entry.id)),
     [props.catalogSources, pending],
   );
   const { sort, onSort } = useSort<MaterialSort>("name", true, key => key === "name" || key === "division" || key === "costType");
   const [editingProduct, setEditingProduct] = useState<Product | null | undefined>(undefined);
-  const [editingBook, setEditingBook] = useState<PriceBook | null | undefined>(undefined);
   const [editingSource, setEditingSource] = useState<CatalogSource | null | undefined>(undefined);
   const importRef = useRef<HTMLInputElement>(null);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -109,7 +110,8 @@ export function CatalogView(props: Props) {
   const [search, setSearch] = useState("");
   const [costType, setCostType] = useState<CostType | "all">("all");
 
-  const format = formatters(preferences.defaultCurrency, preferences.locale);
+  const format = formatters(DEFAULT_CURRENCY, preferences.locale);
+  const markup = preferences.markupPercent;
 
   const visible = useMemo(() => {
     const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
@@ -132,8 +134,8 @@ export function CatalogView(props: Props) {
         .toLowerCase();
       return terms.every(term => haystack.includes(term));
     });
-    return sortRows(matching, sort, materialValue);
-  }, [products, search, costType, sort]);
+    return sortRows(matching, sort, (product, key) => materialValue(product, key, markup));
+  }, [products, search, costType, sort, markup]);
 
   const saveSource = async (input: CatalogSourceInput) => {
     if (editingSource) await api.updateCatalogSource(editingSource.id, input);
@@ -185,26 +187,11 @@ export function CatalogView(props: Props) {
     setEditingProduct(undefined);
   };
 
-  const saveBook = async (input: PriceBookInput) => {
-    if (editingBook) await api.updatePriceBook(editingBook.id, input);
-    else await api.createPriceBook(input);
-    await props.onChanged();
-    setEditingBook(undefined);
-  };
-
   const removeProduct = (product: Product) =>
     removeWithUndo({
       id: product.id,
       label: `Deleted ${product.sku}. Estimates that use it keep the price they were given.`,
       remove: () => api.deleteProduct(product.id),
-      done: props.onChanged,
-    });
-
-  const removeBook = (book: PriceBook) =>
-    removeWithUndo({
-      id: book.id,
-      label: `Deleted the price book “${book.name}”.`,
-      remove: () => api.deletePriceBook(book.id),
       done: props.onChanged,
     });
 
@@ -262,7 +249,7 @@ export function CatalogView(props: Props) {
               <Upload /> Import
             </Button>
             <Button variant="outline" size="sm" asChild>
-              <a href={api.catalogExportUrl} title="Products, price books and rules as one file">
+              <a href={api.catalogExportUrl} title="The whole catalogue as one file">
                 <Download /> Export
               </a>
             </Button>
@@ -321,7 +308,7 @@ export function CatalogView(props: Props) {
                   Cost type
                 </SortTh>
                 <SortTh column="listPrice" sort={sort} onSort={onSort} numeric>
-                  List
+                  Price
                 </SortTh>
                 <SortTh column="margin" sort={sort} onSort={onSort} numeric>
                   Margin
@@ -332,8 +319,7 @@ export function CatalogView(props: Props) {
             </Thead>
             <Tbody>
               {visible.map(product => {
-                const mine = product.ownerId === myId;
-                const margin = marginOf(product);
+                const margin = marginOf(product, markup);
 
                 return (
                   <Tr key={product.id} className={product.active ? undefined : "opacity-60"}>
@@ -343,7 +329,6 @@ export function CatalogView(props: Props) {
                         <span className="font-medium">{product.name}</span>
                         <span className="font-mono text-xs text-muted-foreground">{product.sku}</span>
                         {!product.active && <Badge tone="neutral">inactive</Badge>}
-                        {!mine && <Badge tone="info">shared with you</Badge>}
                       </div>
                       {product.description && (
                         <p className="line-clamp-1 text-xs text-muted-foreground">{product.description}</p>
@@ -357,14 +342,13 @@ export function CatalogView(props: Props) {
                     </Td>
                     <Td className="text-muted-foreground">
                       {COST_TYPE_LABELS[product.costType]}
-                      {product.chargeType === "recurring" && (
-                        <span className="block text-xs">rented, per {product.billingPeriod.replace("ly", "")}</span>
-                      )}
-                      {product.chargeType === "usage" && <span className="block text-xs">unit rate</span>}
                     </Td>
                     <Td numeric>
-                      {format.money(product.listPrice, product.currency)}
-                      <span className="block text-xs text-muted-foreground">per {product.unitOfMeasure}</span>
+                      {format.money(priceOf(product, markup))}
+                      <span className="block text-xs text-muted-foreground">
+                        per {product.unitOfMeasure}
+                        {product.listPrice > 0 ? "" : " · cost + markup"}
+                      </span>
                     </Td>
                     <Td numeric className="text-muted-foreground">
                       {format.percent(margin)}
@@ -412,26 +396,14 @@ export function CatalogView(props: Props) {
                         >
                           <Pencil />
                         </Button>
-                        {mine && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => props.onShare("products", product.id, product.name)}
-                              aria-label={`Share ${product.name}`}
-                            >
-                              <Share2 />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => void removeProduct(product)}
-                              aria-label={`Delete ${product.name}`}
-                            >
-                              <Trash2 className="text-muted-foreground hover:text-destructive" />
-                            </Button>
-                          </>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void removeProduct(product)}
+                          aria-label={`Delete ${product.name}`}
+                        >
+                          <Trash2 className="text-muted-foreground hover:text-destructive" />
+                        </Button>
                       </div>
                     </Td>
                   </Tr>
@@ -441,84 +413,6 @@ export function CatalogView(props: Props) {
           </Table>
             )}
           </>
-        )}
-      </Section>
-
-      <Section
-        title="Price books"
-        description="What an item costs a particular client, and the floor nothing may go below."
-        actions={
-          <Button size="sm" onClick={() => setEditingBook(null)}>
-            <Plus /> New price book
-          </Button>
-        }
-      >
-        {priceBooks.length === 0 ? (
-          <EmptyState title="No price books">
-            Without one, every quote is priced straight off the catalogue's list price.
-          </EmptyState>
-        ) : (
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Name</Th>
-                <Th>Currency</Th>
-                <Th numeric>Entries</Th>
-                <Th>Valid</Th>
-                <Th className="w-28" aria-label="Actions" />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {priceBooks.map(book => (
-                <Tr key={book.id} className={book.active ? undefined : "opacity-60"}>
-                  <Td>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <BookOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="font-medium">{book.name}</span>
-                      {book.isDefault && <Badge tone="success">default</Badge>}
-                      {!book.active && <Badge tone="neutral">inactive</Badge>}
-                      {book.ownerId !== myId && <Badge tone="info">shared with you</Badge>}
-                    </div>
-                    {book.description && <p className="line-clamp-1 text-xs text-muted-foreground">{book.description}</p>}
-                  </Td>
-                  <Td className="text-muted-foreground">{book.currency}</Td>
-                  <Td numeric className="text-muted-foreground">
-                    {book.entries.length}
-                  </Td>
-                  <Td className="text-xs text-muted-foreground">
-                    {book.validFrom || book.validTo ? `${book.validFrom || "—"} → ${book.validTo || "—"}` : "Always"}
-                  </Td>
-                  <Td>
-                    <div className="flex justify-end gap-0.5">
-                      <Button variant="ghost" size="icon-sm" onClick={() => setEditingBook(book)} aria-label={`Edit ${book.name}`}>
-                        <Pencil />
-                      </Button>
-                      {book.ownerId === myId && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => props.onShare("price-books", book.id, book.name)}
-                            aria-label={`Share ${book.name}`}
-                          >
-                            <Share2 />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => void removeBook(book)}
-                            aria-label={`Delete ${book.name}`}
-                          >
-                            <Trash2 className="text-muted-foreground hover:text-destructive" />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
         )}
       </Section>
 
@@ -698,14 +592,6 @@ export function CatalogView(props: Props) {
         />
       )}
 
-      {editingBook !== undefined && (
-        <PriceBookEditor
-          book={editingBook}
-          products={products}
-          onSave={saveBook}
-          onClose={() => setEditingBook(undefined)}
-        />
-      )}
     </div>
   );
 }

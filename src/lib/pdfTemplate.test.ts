@@ -93,7 +93,7 @@ describe("blocks", () => {
     expect(result.text).toContain(escapeForPdf(formatMoney(quote.totals.listTotal, quote.currency, "en-US")));
 
     // A discount is money coming off, and reads that way.
-    const discount = quote.totals.listTotal - quote.totals.netTotal;
+    const discount = quote.totals.lineDiscountAmount + quote.totals.quoteDiscountAmount;
     expect(discount).toBeGreaterThan(0);
     expect(result.text).toContain(escapeForPdf(`-${formatMoney(discount, quote.currency, "en-US")}`));
   });
@@ -500,7 +500,7 @@ describe("an invoice template", () => {
 
   test("it is held to the invoice totals list, not the quote one", () => {
     // A quote's fields are dropped exactly the way `margin` is: an invoice
-    // has no list price and no contract value, and a row naming one would
+    // has no list price and no overhead, and a row naming one would
     // print zero on a document about money somebody owes.
     const parsed = readPdfTemplate(
       JSON.stringify({
@@ -510,7 +510,7 @@ describe("an invoice template", () => {
             type: "totals",
             rows: [
               { label: "List price", field: "listTotal" },
-              { label: "Contract value", field: "totalContractValue" },
+              { label: "Overhead", field: "overheadAmount" },
             ],
           },
         ],
@@ -534,7 +534,7 @@ describe("an invoice template", () => {
           {
             type: "lineItems",
             columns: [
-              { field: "term", header: "Term", width: 2 },
+              { field: "listPrice", header: "List", width: 2 },
               { field: "discountPercent", header: "Discount", width: 2 },
             ],
           },
@@ -548,7 +548,7 @@ describe("an invoice template", () => {
     if (!parsed.ok) return;
     const block = parsed.value.blocks[0] as Extract<PdfTemplate["blocks"][number], { type: "lineItems" }>;
     expect(block.columns.map(column => column.field)).toContain("taxAmount");
-    expect(block.columns.map(column => column.field)).not.toContain("term");
+    expect(block.columns.map(column => column.field)).not.toContain("listPrice");
   });
 
   test("every block type renders straight after being added to one", () => {

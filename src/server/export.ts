@@ -56,11 +56,8 @@ export function quoteRows(quote: Quote): Row[] {
     family: line.family,
     options: line.optionNames.join("; "),
     description: line.description,
-    chargeType: line.chargeType,
-    billingPeriod: line.chargeType === "recurring" ? line.billingPeriod : "",
-    termMonths: line.termMonths,
-    periods: line.periods,
     quantity: line.quantity,
+    orderQuantity: line.orderQuantity,
     unitOfMeasure: line.unitOfMeasure,
     listUnitPrice: line.listUnitPrice,
     optionsUnitDelta: line.optionsUnitDelta,
@@ -73,12 +70,10 @@ export function quoteRows(quote: Quote): Row[] {
     costTotal: line.costTotal,
     margin: line.margin,
     marginPercent: line.marginPercent,
-    monthlyRecurring: line.monthlyRecurring,
-    appliedRules: line.appliedRules.map(applied => applied.name).join("; "),
   }));
 }
 
-/** The quote, whole — header, lines, totals and approvals. */
+/** The quote, whole — header, lines and totals. */
 export const quoteJson = (quote: Quote): string => toJson(quote);
 
 /* ------------------------------ receivables ------------------------------ */

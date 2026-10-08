@@ -1,18 +1,17 @@
 /**
- * A worked example: a catalogue, the policy around it, two customers and the
- * documents to send them.
+ * A worked example: a catalogue, the clients and jobs it is quoted to, and
+ * the documents to send them.
  *
- * An empty CPQ is not explorable. You cannot see what a volume tier does
- * without a product that has one, what an approval rule does without a
- * discount deep enough to trip it, or what a bundle does without a bundle. So
- * a new account can install this in one click and then take it apart — every
- * feature in the app is represented by something here that uses it.
+ * An empty estimating app is not explorable. You cannot see what a volume
+ * tier does without an item that has one, what a waste factor does without a
+ * sheet good, or what an assembly does without an assembly. So a new account
+ * can install this in one click and then take it apart — every feature in the
+ * app is represented by something here that uses it.
  *
- * It is deliberately a *plausible* B2B software catalogue rather than a
- * minimal one: tiers that overlap the way published price breaks do, a
- * services family with its own discount ceiling, a bundle whose components
- * carry the price, and an approval ladder that a 30% discount actually walks
- * up. The numbers are made up; the shapes are not.
+ * It is deliberately *plausible* rather than minimal: price breaks where a
+ * yard actually gives them, waste on the materials that waste, and an
+ * assembly whose components carry the price. The numbers are made up; the
+ * shapes are not.
  *
  * Everything here goes through `src/lib/validate.ts` on its way in, exactly
  * like an imported file, so the sample cannot encode anything the app would
@@ -24,15 +23,7 @@ import { addDays, dueDateFor, invoiceTotals, pricedLines, today as todayIso } fr
 import { SAMPLE_COVER_BANNER, SAMPLE_LOGO } from "./sampleBrand";
 import { EMPTY_MAPPING, EMPTY_MATERIAL } from "./types";
 import type { Invoice, InvoiceLine, ProposalFormat, Product, Quote, TemplateKind } from "./types";
-import type {
-  AccountInput,
-  ApprovalRuleInput,
-  CatalogSourceInput,
-  PriceBookInput,
-  PricingRuleInput,
-  ProductInput,
-  ProjectInput,
-} from "./validate";
+import type { AccountInput, CatalogSourceInput, ProductInput, ProjectInput } from "./validate";
 
 /* -------------------------------- catalogue ------------------------------- */
 
@@ -43,9 +34,8 @@ import type {
  * waste factors on the sheet goods that actually waste, a purchase multiple on
  * the ready-mix nobody will sell you by the cubic foot, coverage on the two
  * materials that are bought by the bundle and measured by the square foot, all
- * five cost types, all three charge types (the scissor lift is the recurring
- * one — it is rented by the month, which is what `recurring` means on a job
- * site), an assembly that pulls its own materials onto the estimate, and a
+ * five cost types, equipment rented by the month (the scissor lift, in `MO`),
+ * an assembly that pulls its own materials onto the estimate, and a
  * window with a submittal against it and a four-week lead time.
  *
  * The prices are plausible rather than real. The shapes are real.
@@ -57,16 +47,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Kiln-dried Douglas Fir #2 precut stud for 8′ walls.",
     family: "Framing",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 4.28,
     cost: 3.35,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 12,
     // Lumber is culled on site: crooks, splits and the odd one used as a brace.
     wasteFactorPercent: 8,
     purchaseMultiple: 0,
@@ -91,7 +75,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 294, maxQuantity: 881, kind: "percent", value: 6 },
       { minQuantity: 882, maxQuantity: null, kind: "percent", value: 11 },
     ],
-    attributes: { "Unit quantity": "294 per banded unit", Treatment: "Kiln dried, heat treated" },
   },
   {
     sku: "LBR-OSB-716",
@@ -99,16 +82,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "APA-rated exposure 1 wall and roof sheathing.",
     family: "Framing",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "SHT",
     listPrice: 18.9,
     cost: 15.1,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     // Sheet goods waste harder than sticks: every sheet cut to fit leaves an
     // offcut too small for the next opening.
     wasteFactorPercent: 12,
@@ -131,7 +108,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 49, kind: "percent", value: 0 },
       { minQuantity: 50, maxQuantity: null, kind: "percent", value: 7 },
     ],
-    attributes: { Span: "24/16", Exposure: "Exposure 1" },
   },
   {
     sku: "CONC-RM-4000",
@@ -139,16 +115,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "4000 PSI mix delivered to site, 4″ slump, ¾″ aggregate.",
     family: "Concrete",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "CY",
     listPrice: 168,
     cost: 142,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 8,
     wasteFactorPercent: 5,
     // No plant batches finer than a quarter yard.
     purchaseMultiple: 0.25,
@@ -201,7 +171,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 5, maxQuantity: 9.75, kind: "percent", value: 0 },
       { minQuantity: 10, maxQuantity: null, kind: "percent", value: 5 },
     ],
-    attributes: { Slump: "4 in ± 1", Aggregate: "3/4 in", "Short load fee": "Under 5 CY" },
   },
   {
     sku: "RFG-SHNG-ARCH",
@@ -209,16 +178,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Laminated asphalt shingle, 130 mph wind rating.",
     family: "Roofing",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "BDL",
     listPrice: 38.5,
     cost: 31.2,
-    currency: "USD",
     active: true,
-    minQuantity: 3,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     // Hips, valleys and starter courses all come off the bundle count.
     wasteFactorPercent: 12,
     purchaseMultiple: 1,
@@ -279,7 +242,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 3, maxQuantity: 59, kind: "percent", value: 0 },
       { minQuantity: 60, maxQuantity: null, kind: "percent", value: 8 },
     ],
-    attributes: { "Wind rating": "130 mph", "Fire rating": "Class A", Coverage: "3 bundles per square" },
   },
   {
     sku: "DRY-5812-4X12",
@@ -287,16 +249,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Fire-rated gypsum wallboard, tapered edge.",
     family: "Interior Finishes",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "SHT",
     listPrice: 21.4,
     cost: 17.6,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     // The worst waster in the catalogue, and the reason the field exists.
     wasteFactorPercent: 15,
     purchaseMultiple: 0,
@@ -320,7 +276,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 99, kind: "percent", value: 0 },
       { minQuantity: 100, maxQuantity: null, kind: "percent", value: 9 },
     ],
-    attributes: { "Fire rating": "Type X, 1 hr assembly", Edge: "Tapered" },
   },
   {
     sku: "WIN-DH-3050",
@@ -328,16 +283,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Vinyl double-hung, low-E argon insulated glazing.",
     family: "Openings",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 412,
     cost: 318,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 15,
     // Windows are ordered to an opening. Nothing is cut off and nothing spare
     // is delivered — which is exactly why the field is zero here rather than
     // absent from the model.
@@ -405,7 +354,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 10, maxQuantity: 24, kind: "percent", value: 7 },
       { minQuantity: 25, maxQuantity: null, kind: "percent", value: 13 },
     ],
-    attributes: { "U-factor": "0.28", "Egress rated": "No", Warranty: "20 year glass seal" },
   },
   {
     sku: "LAB-CARP-JRNY",
@@ -413,16 +361,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Journeyman carpenter, straight time. Burdened rate.",
     family: "Labor",
     costType: "labor",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "HR",
     listPrice: 86,
     cost: 61,
-    currency: "USD",
     active: true,
-    minQuantity: 4,
-    maxQuantity: 0,
-    floorDiscountPercent: 8,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "01" },
@@ -443,7 +385,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Burden: "Includes payroll taxes, insurance and fringe", Classification: "Journeyman" },
   },
   {
     sku: "LAB-CREW-FRAME",
@@ -451,16 +392,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Lead carpenter and three framers, per working day.",
     family: "Labor",
     costType: "labor",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "DAY",
     listPrice: 2560,
     cost: 1890,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "06" },
@@ -471,7 +406,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 9, kind: "percent", value: 0 },
       { minQuantity: 10, maxQuantity: null, kind: "percent", value: 6 },
     ],
-    attributes: { Crew: "1 lead + 3 framers", Day: "8 hours on site" },
   },
   {
     sku: "EQP-LIFT-19",
@@ -479,18 +413,12 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "19 ft electric scissor lift on site, delivery and pickup included.",
     family: "Equipment",
     costType: "equipment",
-    // The catalogue's recurring item: a lift is rented by the month for as
-    // long as the estimate's term says it is on the job.
-    chargeType: "recurring",
-    billingPeriod: "monthly",
+    // Rented by the month: the quantity on an estimate is how many months it
+    // is on the job.
     unitOfMeasure: "MO",
     listPrice: 685,
     cost: 495,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 12,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: {
@@ -518,7 +446,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { "Platform height": "19 ft", "Working height": "25 ft", Power: "Electric, 24V" },
   },
   {
     sku: "SUB-ELEC-ROUGH",
@@ -526,18 +453,11 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Licensed electrical subcontractor: rough-in, panel and inspection.",
     family: "Subcontracts",
     costType: "subcontract",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LS",
     listPrice: 14800,
     cost: 12900,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    // A subcontract is bought at a bid price. There is very little room in it
-    // and the approval ladder is told so by this number.
-    floorDiscountPercent: 5,
+    // A subcontract is bought at a bid price, with very little room in it.
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "26", submittalRequired: true, leadTimeDays: 14 },
@@ -545,7 +465,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Scope: "Rough-in, panel, permit and inspection", Excludes: "Fixtures, trim, low voltage" },
   },
   {
     sku: "EXC-FOOTING",
@@ -555,16 +474,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     costType: "equipment",
     // Quoted at an estimated volume and trued up against what was actually
     // dug, which is how earthwork is very often written.
-    chargeType: "usage",
-    billingPeriod: "monthly",
     unitOfMeasure: "CY",
     listPrice: 34,
     cost: 24.5,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "31" },
@@ -575,7 +488,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 99, kind: "percent", value: 0 },
       { minQuantity: 100, maxQuantity: null, kind: "percent", value: 12 },
     ],
-    attributes: { Basis: "Surveyed neat line volume", Excludes: "Rock, dewatering, shoring" },
   },
   {
     sku: "GEN-DUMPSTER-30",
@@ -583,16 +495,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "30 cubic yard roll-off: delivery, one pull and tipping fees.",
     family: "General Requirements",
     costType: "other",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 620,
     cost: 470,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "01", supplier: "Tri-County Rentals", leadTimeDays: 2 },
@@ -600,7 +506,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Size: "30 CY", Includes: "Delivery, one pull, 4 ton tipping allowance" },
   },
   {
     sku: "ASM-WALL-2X6",
@@ -609,18 +514,12 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       "One linear foot of 8′ exterior wall: studs at 16″ on centre, plates, sheathing and the crew to stand it.",
     family: "Assemblies",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LF",
     // The assembly line itself carries only what its components do not: the
     // fasteners, the housewrap and the blocking nobody takes off separately.
     listPrice: 6.4,
     cost: 4.9,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "06" },
@@ -633,7 +532,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { id: "cmp_osb", sku: "LBR-OSB-716", quantity: 1, required: true },
     ],
     volumeTiers: [],
-    attributes: { Height: "8 ft", Spacing: "16 in o.c.", Includes: "Plates, sheathing, fasteners, housewrap" },
   },
   {
     sku: "REB-4-20",
@@ -641,16 +539,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Deformed reinforcing bar, ½″ diameter, in 20 ft sticks.",
     family: "Concrete",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "PC",
     listPrice: 14.6,
     cost: 11.2,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     // Laps and the offcut at the end of every run.
     wasteFactorPercent: 5,
     purchaseMultiple: 0,
@@ -673,7 +565,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 99, kind: "percent", value: 0 },
       { minQuantity: 100, maxQuantity: null, kind: "percent", value: 6 },
     ],
-    attributes: { "Lap splice": "24 in at #4", Coating: "Uncoated black bar" },
   },
   {
     sku: "CONC-PUMP-32M",
@@ -681,17 +572,11 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Boom pump and operator, portal to portal, with washout.",
     family: "Concrete",
     costType: "equipment",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "HR",
     listPrice: 245,
     cost: 185,
-    currency: "USD",
     active: true,
     // Every pump company in the county has a four-hour minimum.
-    minQuantity: 4,
-    maxQuantity: 0,
-    floorDiscountPercent: 8,
     wasteFactorPercent: 0,
     purchaseMultiple: 0.5,
     material: { ...EMPTY_MATERIAL, division: "03", supplier: "Valley Concrete Pumping", leadTimeDays: 3 },
@@ -699,7 +584,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Reach: "28 m vertical", Billing: "Half-hour increments after the minimum" },
   },
   {
     sku: "LBR-LVL-1312",
@@ -707,16 +591,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Laminated veneer lumber header and beam stock, cut to length.",
     family: "Framing",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LF",
     listPrice: 9.85,
     cost: 7.6,
-    currency: "USD",
     active: true,
-    minQuantity: 2,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 4,
     // The yard cuts to even feet and charges for the whole two.
     purchaseMultiple: 2,
@@ -739,7 +617,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { "Max length": "48 ft", Plies: "Ply up two or three for wider beams" },
   },
   {
     sku: "INS-BATT-R21",
@@ -747,16 +624,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Kraft-faced batts for 2×6 walls at 16″ on centre.",
     family: "Thermal & Moisture",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "BDL",
     listPrice: 64,
     cost: 49.5,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 5,
     purchaseMultiple: 1,
     material: {
@@ -779,7 +650,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 39, kind: "percent", value: 0 },
       { minQuantity: 40, maxQuantity: null, kind: "percent", value: 8 },
     ],
-    attributes: { Facing: "Kraft", Fits: "2×6 at 16 in o.c." },
   },
   {
     sku: "ENV-WRB-9X150",
@@ -787,16 +657,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Spun-bonded polyolefin weather-resistive barrier.",
     family: "Thermal & Moisture",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "ROLL",
     listPrice: 189,
     cost: 148,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     // Six-inch laps on every seam and the corners wrapped twice.
     wasteFactorPercent: 10,
     purchaseMultiple: 1,
@@ -816,7 +680,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Perm: "54", "UV exposure": "120 days" },
   },
   {
     sku: "FIN-PAINT-INT",
@@ -824,16 +687,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Premium acrylic latex, tinted to schedule.",
     family: "Interior Finishes",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "GAL",
     listPrice: 52,
     cost: 34,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 12,
     wasteFactorPercent: 10,
     purchaseMultiple: 1,
     material: {
@@ -869,7 +726,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 19, kind: "percent", value: 0 },
       { minQuantity: 20, maxQuantity: null, kind: "percent", value: 10 },
     ],
-    attributes: { Coverage: "350 SF per gallon, one coat", Recoat: "4 hours" },
   },
   {
     sku: "DR-INT-PH-3068",
@@ -877,16 +733,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Six-panel moulded door, primed, on a split jamb.",
     family: "Openings",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 238,
     cost: 176,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 12,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: {
@@ -933,7 +783,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { minQuantity: 1, maxQuantity: 9, kind: "percent", value: 0 },
       { minQuantity: 10, maxQuantity: null, kind: "percent", value: 5 },
     ],
-    attributes: { Jamb: "Split, 4-9/16 in", Hinges: "3 × 3-1/2 in satin nickel" },
   },
   {
     sku: "FIN-CASING-MDF",
@@ -941,16 +790,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Primed MDF casing, sold in 7′ lengths.",
     family: "Interior Finishes",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LF",
     listPrice: 1.45,
     cost: 0.98,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 12,
     // Every mitre costs a few inches, and two of every ten get dinged.
     wasteFactorPercent: 10,
     purchaseMultiple: 7,
@@ -967,7 +810,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Profile: "Colonial", Length: "7 ft" },
   },
   {
     sku: "LAB-LABORER",
@@ -975,16 +817,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Site labour: material handling, clean-up, protection. Burdened rate.",
     family: "Labor",
     costType: "labor",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "HR",
     listPrice: 58,
     cost: 41,
-    currency: "USD",
     active: true,
-    minQuantity: 4,
-    maxQuantity: 0,
-    floorDiscountPercent: 8,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "01" },
@@ -1004,7 +840,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Burden: "Includes payroll taxes, insurance and fringe" },
   },
   {
     sku: "GEN-SUPER-MO",
@@ -1013,16 +848,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     family: "General Requirements",
     costType: "labor",
     // General conditions run for as long as the job does.
-    chargeType: "recurring",
-    billingPeriod: "monthly",
     unitOfMeasure: "MO",
     listPrice: 11_500,
     cost: 8_900,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 5,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "01" },
@@ -1030,7 +859,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Includes: "Superintendent, vehicle, phone, daily reports" },
   },
   {
     sku: "GEN-FENCE-TEMP",
@@ -1038,17 +866,11 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "6′ chain-link panels on stands, with privacy screen. Per foot, per month.",
     family: "General Requirements",
     costType: "equipment",
-    chargeType: "recurring",
-    billingPeriod: "monthly",
     unitOfMeasure: "LF",
     listPrice: 1.85,
     cost: 1.2,
-    currency: "USD",
     active: true,
     // The rental yard will not send a truck for less.
-    minQuantity: 100,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     // Panels are ten feet wide.
     purchaseMultiple: 10,
@@ -1057,7 +879,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Height: "6 ft", Panel: "10 ft", Screen: "Green privacy mesh" },
   },
   {
     sku: "SUB-PLMB-ROUGH",
@@ -1065,16 +886,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Licensed plumbing subcontractor: waste, vent and supply rough-in, tested and inspected.",
     family: "Subcontracts",
     costType: "subcontract",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LS",
     listPrice: 18_600,
     cost: 16_400,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 5,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "22", submittalRequired: true, leadTimeDays: 10 },
@@ -1082,7 +897,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Scope: "DWV, water supply, gas stub-outs, test and inspection", Excludes: "Fixtures and trim-out" },
   },
   {
     sku: "SUB-HVAC",
@@ -1090,16 +904,10 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "Mechanical subcontractor: equipment, ductwork, start-up and balancing.",
     family: "Subcontracts",
     costType: "subcontract",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "LS",
     listPrice: 22_400,
     cost: 19_700,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 5,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "23", submittalRequired: true, leadTimeDays: 21 },
@@ -1107,7 +915,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: { Scope: "Heat pumps, ductwork, controls, start-up, test and balance", Excludes: "Electrical to disconnect" },
   },
   {
     sku: "ASM-DOOR-INT",
@@ -1115,17 +922,11 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
     description: "One pre-hung interior door, set, shimmed and cased both sides.",
     family: "Assemblies",
     costType: "material",
-    chargeType: "one-time",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     // Shims, nails and the lockset; the door and its casing are their own lines.
     listPrice: 48,
     cost: 31,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 10,
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
     material: { ...EMPTY_MATERIAL, division: "08" },
@@ -1137,226 +938,6 @@ export const SAMPLE_PRODUCTS: ProductInput[] = [
       { id: "cmp_casing", sku: "FIN-CASING-MDF", quantity: 34, required: true },
     ],
     volumeTiers: [],
-    attributes: { Includes: "Door, casing both sides, passage lockset, shims and fasteners" },
-  },
-];
-
-/* ------------------------------ price books ------------------------------ */
-
-export const SAMPLE_PRICE_BOOKS: PriceBookInput[] = [
-  {
-    name: "2026 published",
-    description: "The published schedule of values. Every item's catalogue price, with the floors below which nothing sells.",
-    currency: "USD",
-    isDefault: true,
-    active: true,
-    validFrom: "",
-    validTo: "",
-    entries: [
-      { sku: "LBR-STUD-2X4", unitPrice: 4.28, minPrice: 3.72, active: true },
-      { sku: "LBR-OSB-716", unitPrice: 18.9, minPrice: 16.4, active: true },
-      { sku: "CONC-RM-4000", unitPrice: 168, minPrice: 152, active: true },
-      { sku: "RFG-SHNG-ARCH", unitPrice: 38.5, minPrice: 33.8, active: true },
-      { sku: "DRY-5812-4X12", unitPrice: 21.4, minPrice: 18.9, active: true },
-      { sku: "WIN-DH-3050", unitPrice: 412, minPrice: 342, active: true },
-      { sku: "LAB-CARP-JRNY", unitPrice: 86, minPrice: 72, active: true },
-      { sku: "LAB-CREW-FRAME", unitPrice: 2_560, minPrice: 2_150, active: true },
-      { sku: "EQP-LIFT-19", unitPrice: 685, minPrice: 560, active: true },
-      { sku: "SUB-ELEC-ROUGH", unitPrice: 14_800, minPrice: 13_600, active: true },
-      { sku: "EXC-FOOTING", unitPrice: 34, minPrice: 27, active: true },
-      { sku: "GEN-DUMPSTER-30", unitPrice: 620, minPrice: 520, active: true },
-      { sku: "ASM-WALL-2X6", unitPrice: 6.4, minPrice: 5.4, active: true },
-      { sku: "REB-4-20", unitPrice: 14.6, minPrice: 12.8, active: true },
-      { sku: "CONC-PUMP-32M", unitPrice: 245, minPrice: 215, active: true },
-      { sku: "LBR-LVL-1312", unitPrice: 9.85, minPrice: 8.6, active: true },
-      { sku: "INS-BATT-R21", unitPrice: 64, minPrice: 56, active: true },
-      { sku: "ENV-WRB-9X150", unitPrice: 189, minPrice: 166, active: true },
-      { sku: "FIN-PAINT-INT", unitPrice: 52, minPrice: 42, active: true },
-      { sku: "DR-INT-PH-3068", unitPrice: 238, minPrice: 205, active: true },
-      { sku: "FIN-CASING-MDF", unitPrice: 1.45, minPrice: 1.2, active: true },
-      { sku: "LAB-LABORER", unitPrice: 58, minPrice: 50, active: true },
-      { sku: "GEN-SUPER-MO", unitPrice: 11_500, minPrice: 10_600, active: true },
-      { sku: "GEN-FENCE-TEMP", unitPrice: 1.85, minPrice: 1.55, active: true },
-      { sku: "SUB-PLMB-ROUGH", unitPrice: 18_600, minPrice: 17_400, active: true },
-      { sku: "SUB-HVAC", unitPrice: 22_400, minPrice: 20_900, active: true },
-      { sku: "ASM-DOOR-INT", unitPrice: 48, minPrice: 40, active: true },
-    ],
-  },
-  {
-    name: "Repeat developer",
-    description:
-      "What a developer on their fourth building pays. Already sharpened, so the floors are what keep the next negotiation from going underwater.",
-    currency: "USD",
-    isDefault: false,
-    active: true,
-    validFrom: "",
-    validTo: "",
-    entries: [
-      { sku: "LBR-STUD-2X4", unitPrice: 4.02, minPrice: 3.72, active: true },
-      { sku: "LBR-OSB-716", unitPrice: 17.8, minPrice: 16.4, active: true },
-      { sku: "CONC-RM-4000", unitPrice: 161, minPrice: 152, active: true },
-      { sku: "RFG-SHNG-ARCH", unitPrice: 36.2, minPrice: 33.8, active: true },
-      { sku: "DRY-5812-4X12", unitPrice: 20.1, minPrice: 18.9, active: true },
-      { sku: "WIN-DH-3050", unitPrice: 384, minPrice: 342, active: true },
-      { sku: "LAB-CARP-JRNY", unitPrice: 82, minPrice: 72, active: true },
-      { sku: "LAB-CREW-FRAME", unitPrice: 2_430, minPrice: 2_150, active: true },
-      { sku: "EQP-LIFT-19", unitPrice: 640, minPrice: 560, active: true },
-      { sku: "SUB-ELEC-ROUGH", unitPrice: 14_200, minPrice: 13_600, active: true },
-      { sku: "EXC-FOOTING", unitPrice: 31, minPrice: 27, active: true },
-      { sku: "GEN-DUMPSTER-30", unitPrice: 590, minPrice: 520, active: true },
-      { sku: "ASM-WALL-2X6", unitPrice: 6.05, minPrice: 5.4, active: true },
-      // Only what a developer buys in volume is sharpened; anything not listed
-      // here falls back to the catalogue price.
-      { sku: "REB-4-20", unitPrice: 13.9, minPrice: 12.8, active: true },
-      { sku: "INS-BATT-R21", unitPrice: 60, minPrice: 56, active: true },
-      { sku: "ENV-WRB-9X150", unitPrice: 178, minPrice: 166, active: true },
-      { sku: "GEN-SUPER-MO", unitPrice: 11_000, minPrice: 10_600, active: true },
-    ],
-  },
-];
-
-/* ----------------------------- pricing rules ----------------------------- */
-
-export const SAMPLE_PRICING_RULES: PricingRuleInput[] = [
-  {
-    name: "Long rental term",
-    description: "Equipment held on a job past six months comes down in price, without undercutting a better rate already given.",
-    scope: "line",
-    condition: "termMonths >= 6 && isRecurring == 1",
-    target: "discountPercent",
-    expression: "max(discountPercent, 10)",
-    appliesToFamily: "Equipment",
-    appliesToSku: "",
-    priority: 10,
-    active: true,
-    message: "Long-term rental rate",
-  },
-  {
-    name: "Crew day rate over a full week",
-    description: "Five days or more of the same crew is sold at the weekly rate.",
-    scope: "line",
-    condition: "quantity >= 5",
-    target: "discountPercent",
-    expression: "max(discountPercent, 8)",
-    appliesToFamily: "",
-    appliesToSku: "LAB-CREW-FRAME",
-    priority: 20,
-    active: true,
-    message: "Weekly crew rate",
-  },
-  {
-    name: "Subcontract markup",
-    description:
-      "Subcontracted work carries the general contractor's fee as an explicit adjustment rather than buried in the unit price, so the client can see what it is.",
-    scope: "line",
-    condition: "isSubcontract == 1",
-    target: "adjustment",
-    expression: "round(netTotal * 0.08, 2)",
-    appliesToFamily: "",
-    appliesToSku: "",
-    priority: 30,
-    active: true,
-    message: "GC fee, 8%",
-  },
-  {
-    name: "Large project rebate",
-    description: "A rebate on a whole contract above a quarter of a million, applied to the estimate rather than to any one line.",
-    scope: "quote",
-    condition: "subtotal >= 250000",
-    target: "discountPercent",
-    expression: "max(discountPercent, 3)",
-    appliesToFamily: "",
-    appliesToSku: "",
-    priority: 40,
-    active: true,
-    message: "Project rebate",
-  },
-];
-
-/* ---------------------------- approval rules ----------------------------- */
-
-/**
- * The approver is the account installing the sample, so the ladder can
- * actually be walked in a demo: submit a quote, approve it as yourself, send
- * it. Point them at real colleagues once there are some.
- *
- * Each rule asks one person here for the same reason — a quorum of two cannot
- * be met by one account, and a sample you cannot finish is worse than a simple
- * one. The shape is what the editor is for: add a second approver to the VP
- * rule and set it to two, and the demo turns into a board.
- */
-export const sampleApprovalRules = (approverEmail: string): ApprovalRuleInput[] => [
-  {
-    name: "Estimating manager",
-    scope: "quote",
-    metric: "discountPercent",
-    comparator: ">",
-    threshold: 10,
-    condition: "",
-    level: 1,
-    approvers: [approverEmail],
-    approvalsRequired: 1,
-    rejectionsRequired: 1,
-    message: "More than 10% off the estimate needs the estimating manager.",
-    active: true,
-  },
-  {
-    name: "Below an item's own floor",
-    scope: "line",
-    metric: "floorBreach",
-    comparator: ">",
-    threshold: 0,
-    condition: "",
-    level: 1,
-    approvers: [approverEmail],
-    approvalsRequired: 1,
-    rejectionsRequired: 1,
-    message: "A line was cut past the ceiling its own catalogue item allows.",
-    active: true,
-  },
-  {
-    name: "Owner — thin job",
-    scope: "quote",
-    metric: "marginPercent",
-    comparator: "<",
-    threshold: 18,
-    condition: "",
-    level: 2,
-    approvers: [approverEmail],
-    approvalsRequired: 1,
-    rejectionsRequired: 1,
-    message: "Under 18% margin is a job that cannot absorb a surprise.",
-    active: true,
-  },
-  {
-    name: "Owner — large contract",
-    scope: "quote",
-    metric: "netTotal",
-    comparator: ">",
-    threshold: 500_000,
-    condition: "",
-    level: 2,
-    approvers: [approverEmail],
-    approvalsRequired: 1,
-    rejectionsRequired: 1,
-    message: "Anything over half a million is the owner's signature.",
-    active: true,
-  },
-  {
-    // The rule that makes the formula language earn its keep: this is a
-    // policy about the *shape* of a job, not about any one number on it.
-    name: "Owner — mostly subcontracted",
-    scope: "quote",
-    metric: "custom",
-    comparator: ">",
-    threshold: 0,
-    condition: "subtotal > 100000 && costTotal > subtotal * 0.82",
-    level: 2,
-    approvers: [approverEmail],
-    approvalsRequired: 1,
-    rejectionsRequired: 1,
-    message: "Cost is over 82% of the contract — check what is being carried for whom.",
-    active: true,
   },
 ];
 
@@ -1417,7 +998,6 @@ export const SAMPLE_ACCOUNTS: AccountInput[] = [
     },
     shippingSameAsBilling: false,
     currency: "USD",
-    priceBookId: "",
     paymentTerms: "Net 30",
     paymentTermDays: 30,
     creditLimit: 2_500_000,
@@ -1472,7 +1052,6 @@ export const SAMPLE_ACCOUNTS: AccountInput[] = [
     },
     shippingSameAsBilling: true,
     currency: "USD",
-    priceBookId: "",
     paymentTerms: "Net 45",
     paymentTermDays: 45,
     // Advisory only: nothing here blocks an estimate on it, because a limit
@@ -1529,7 +1108,6 @@ export const SAMPLE_ACCOUNTS: AccountInput[] = [
     },
     shippingSameAsBilling: true,
     currency: "USD",
-    priceBookId: "",
     paymentTerms: "Net 14",
     paymentTermDays: 14,
     creditLimit: 0,
@@ -1687,7 +1265,6 @@ export const SAMPLE_CATALOG_SOURCES: CatalogSourceInput[] = [
       markupPercent: 0,
       defaultFamily: "",
       defaultCostType: "material",
-      currency: "USD",
     },
     active: true,
     lastRun: null,
@@ -1780,12 +1357,11 @@ const HTML_TEMPLATE = `<!doctype html>
 
     <table>
       <thead>
-        <tr><th>Item</th><th>Billing</th><th>Qty</th><th>Unit</th><th>Total</th></tr>
+        <tr><th>Item</th><th>Qty</th><th>Unit</th><th>Total</th></tr>
       </thead>
       <tbody>
         {{#lines}}<tr>
           <td><strong>{{line.name}}</strong><div class="muted">{{line.options}}{{line.description}}</div></td>
-          <td class="muted">{{line.billing}}</td>
           <td>{{line.quantity}}</td>
           <td>{{line.unitPrice}}</td>
           <td>{{line.total}}</td>
@@ -1796,14 +1372,15 @@ const HTML_TEMPLATE = `<!doctype html>
     <table class="totals">
       <tr><td class="muted">List</td><td>{{totals.listTotal}}</td></tr>
       <tr><td class="muted">Discount ({{totals.discountPercent}})</td><td>−{{totals.discount}}</td></tr>
+      <tr><td class="muted">Overhead</td><td>{{totals.overhead}}</td></tr>
       <tr><td class="muted">Shipping</td><td>{{totals.shipping}}</td></tr>
       <tr><td class="muted">Tax</td><td>{{totals.tax}}</td></tr>
-      <tr><td>Total ({{quote.termMonths}} months)</td><td>{{totals.grandTotal}}</td></tr>
+      <tr><td>Total</td><td>{{totals.grandTotal}}</td></tr>
     </table>
 
     <footer>
       <p>{{quote.notes}}</p>
-      <p class="muted">Recurring charges shown across the full {{quote.termMonths}}-month term ({{totals.mrr}} per month). Pricing is valid until {{quote.validUntil}}.</p>
+      <p class="muted">Pricing is valid until {{quote.validUntil}}.</p>
     </footer>
   </body>
 </html>`;
@@ -1827,10 +1404,9 @@ Valid until **{{quote.validUntil}}**
 | --- | --- |
 | List | {{totals.listTotal}} |
 | Discount ({{totals.discountPercent}}) | −{{totals.discount}} |
+| Overhead | {{totals.overhead}} |
 | Tax | {{totals.tax}} |
-| **Total ({{quote.termMonths}} months)** | **{{totals.grandTotal}}** |
-
-Monthly recurring: {{totals.mrr}} · Annual recurring: {{totals.arr}} · One-time: {{totals.oneTime}}
+| **Total** | **{{totals.grandTotal}}** |
 
 {{quote.notes}}
 
@@ -1853,8 +1429,9 @@ ITEMS
 
 List .......... {{totals.listTotal}}
 Discount ...... -{{totals.discount}} ({{totals.discountPercent}})
+Overhead ...... {{totals.overhead}}
 Tax ........... {{totals.tax}}
-TOTAL ......... {{totals.grandTotal}}  over {{quote.termMonths}} months
+TOTAL ......... {{totals.grandTotal}}
 
 {{quote.notes}}
 
@@ -1959,7 +1536,7 @@ const PDF_SUMMARY: PdfTemplate = {
     { type: "text", text: "{{quote.name}}", size: 11, spaceAfter: 2 },
     {
       type: "text",
-      text: "Prepared for {{customer.name}} · valid until {{quote.validUntil}} · {{quote.termMonths}}-month term",
+      text: "Prepared for {{customer.name}} · valid until {{quote.validUntil}}",
       size: 8.5,
       color: "#71717a",
     },
@@ -1985,18 +1562,9 @@ const PDF_SUMMARY: PdfTemplate = {
       rows: [
         { label: "Subtotal", field: "subtotal" },
         { label: "Discount", field: "totalDiscount", omitIfZero: true },
+        { label: "Overhead", field: "overheadAmount", omitIfZero: true },
         { label: "Tax", field: "taxAmount", omitIfZero: true },
         { label: "Total", field: "grandTotal", emphasis: true },
-      ],
-    },
-    { type: "spacer", height: 6 },
-    {
-      type: "fields",
-      rows: [
-        { label: "Monthly recurring", value: "{{totals.mrr}}" },
-        { label: "Annual recurring", value: "{{totals.arr}}" },
-        { label: "One-time charges", value: "{{totals.oneTime}}" },
-        { label: "Total contract value", value: "{{totals.tcv}}" },
       ],
     },
   ],
@@ -2013,8 +1581,7 @@ const PDF_SUMMARY: PdfTemplate = {
  * is for — the band is the margin, and content starts under it. The line table
  * shows six columns rather than five because a customer who is being asked for
  * a signature wants to see the discount they negotiated on the line it applies
- * to, and the totals list is the full customer-facing set including the
- * recurring split. Behind the page break is the part every real proposal has
+ * to, and the totals list is the full customer-facing set. Behind the page break is the part every real proposal has
  * and no minimal example ever does: the terms.
  */
 const PDF_BRANDED: PdfTemplate = {
@@ -2059,7 +1626,7 @@ const PDF_BRANDED: PdfTemplate = {
         },
         {
           heading: "COMMERCIAL TERMS",
-          text: "{{quote.termMonths}}-month term\nPayment {{customer.paymentTerms}}\nPriced in {{quote.currency}}",
+          text: "Payment {{customer.paymentTerms}}\nValid until {{quote.validUntil}}",
           align: "right",
         },
       ],
@@ -2094,21 +1661,13 @@ const PDF_BRANDED: PdfTemplate = {
         { label: "Line discounts", field: "lineDiscountAmount", omitIfZero: true },
         { label: "Quote discount", field: "quoteDiscountAmount", omitIfZero: true },
         { label: "Discount off list", field: "effectiveDiscountPercent", omitIfZero: true },
+        { label: "Overhead", field: "overheadAmount", omitIfZero: true },
         { label: "Shipping", field: "shipping", omitIfZero: true },
         { label: "Tax", field: "taxAmount", omitIfZero: true },
         { label: "Total", field: "grandTotal", emphasis: true },
       ],
     },
     { type: "spacer", height: 10 },
-    {
-      type: "fields",
-      rows: [
-        { label: "Monthly recurring", value: "{{totals.mrr}}" },
-        { label: "Annual recurring", value: "{{totals.arr}}" },
-        { label: "One-time charges", value: "{{totals.oneTime}}" },
-        { label: "Total contract value", value: "{{totals.tcv}} over {{quote.termMonths}} months" },
-      ],
-    },
     { type: "text", text: "{{quote.notes}}", size: 9, color: "#52525b" },
 
     { type: "pageBreak" },
@@ -2116,7 +1675,7 @@ const PDF_BRANDED: PdfTemplate = {
     { type: "heading", text: "Terms of this quote", size: 13, spaceAfter: 6 },
     {
       type: "text",
-      text: "Pricing is held until {{quote.validUntil}} and assumes the full {{quote.termMonths}}-month term stated above. Recurring charges are billed in advance; one-time charges are invoiced on delivery. Payment terms are {{customer.paymentTerms}} from the date of invoice.",
+      text: "Pricing is held until {{quote.validUntil}}. Material is invoiced on delivery and labour as it is performed. Payment terms are {{customer.paymentTerms}} from the date of invoice.",
       size: 9.5,
       spaceAfter: 8,
     },
@@ -2191,8 +1750,6 @@ const PDF_ORDER_FORM: PdfTemplate = {
         { label: "Contact", value: "{{customer.contactName}} · {{customer.contactEmail}}" },
         { label: "Billing address", value: "{{customer.address}}" },
         { label: "Payment terms", value: "{{customer.paymentTerms}}" },
-        { label: "Term", value: "{{quote.termMonths}} months" },
-        { label: "Currency", value: "{{quote.currency}}" },
       ],
     },
     { type: "divider", thickness: 1 },
@@ -2200,9 +1757,8 @@ const PDF_ORDER_FORM: PdfTemplate = {
     {
       type: "lineItems",
       columns: [
-        { field: "name", header: "Item", width: 5.2 },
-        { field: "billing", header: "Billing", width: 1.5 },
-        { field: "term", header: "Term", width: 1.5 },
+        { field: "name", header: "Item", width: 6.2 },
+        { field: "unitOfMeasure", header: "Unit", width: 1 },
         { field: "quantity", header: "Qty", width: 0.8, align: "right" },
         { field: "unitPrice", header: "Unit price", width: 2.1, align: "right" },
         { field: "total", header: "Total", width: 2.2, align: "right" },
@@ -2262,20 +1818,19 @@ export const starterTemplateBody = (kind: TemplateKind): string =>
  * The quote the sample installs, written against SKUs rather than ids — the
  * seeder resolves them once the products exist.
  *
- * It is built to trip the approval ladder: 40 Enterprise users at 22% off,
- * with services, lands past the manager's 15% and drags the deal desk in on
- * the training line.
+ * It exercises the parts of pricing worth seeing on a first look: waste
+ * factors, a purchase multiple, configured options, a discount, a rental by
+ * the month and a subcontract.
  */
 export const SAMPLE_QUOTE = {
   name: "Cedar Row Townhomes — shell and envelope",
   accountName: "Harbour Point Development",
   projectName: "Cedar Row Townhomes",
-  termMonths: 6,
   notes:
     "Quantities are taken off the 2026-08-14 permit set. Material allowances include waste; the electrical " +
     "subcontract is held at the bid price for 30 days.",
   internalNotes:
-    "Shingle waste is at 12% for the hips. The lift is on the job six months — check whether the rental rule fired.",
+    "Shingle waste is at 12% for the hips. The lift is on the job six months.",
   lines: [
     // A take-off in the units a building is measured in. What has to be
     // bought is worked out from the waste factors on the catalogue.
@@ -2286,8 +1841,8 @@ export const SAMPLE_QUOTE = {
     { sku: "DRY-5812-4X12", quantity: 640, discountPercent: 0, options: [] },
     { sku: "WIN-DH-3050", quantity: 56, discountPercent: 12, options: ["low_e_double", "colonial"] },
     { sku: "LAB-CREW-FRAME", quantity: 22, discountPercent: 0, options: [] },
-    // The recurring one: a lift on the job for the length of the term.
-    { sku: "EQP-LIFT-19", quantity: 1, discountPercent: 0, options: ["damage_waiver"] },
+    // Rented by the month: six months on the job.
+    { sku: "EQP-LIFT-19", quantity: 6, discountPercent: 0, options: ["damage_waiver"] },
     { sku: "SUB-ELEC-ROUGH", quantity: 1, discountPercent: 0, options: [] },
     { sku: "GEN-DUMPSTER-30", quantity: 6, discountPercent: 0, options: [] },
   ],
@@ -2389,16 +1944,10 @@ export function specimenQuote(): Quote {
     name: "Product",
     description: "",
     family: "",
-    chargeType: "recurring",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 0,
     cost: 0,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 0,
     costType: "material",
     wasteFactorPercent: 0,
     purchaseMultiple: 0,
@@ -2407,9 +1956,7 @@ export function specimenQuote(): Quote {
     rules: [],
     components: [],
     volumeTiers: [],
-    attributes: {},
     ownerId: "",
-    sharedWith: [],
     createdAt: "",
     updatedAt: "",
     ...overrides,
@@ -2419,7 +1966,6 @@ export function specimenQuote(): Quote {
     product({
       sku: "RFG-SHNG-ARCH",
       name: "Architectural Shingles, 130 mph, Weathered Wood",
-      chargeType: "one-time",
       unitOfMeasure: "BDL",
       listPrice: 38.5,
       cost: 31.2,
@@ -2445,7 +1991,6 @@ export function specimenQuote(): Quote {
     product({
       sku: "DRY-5812-4X12",
       name: "Gypsum Board, 5/8″ Type X 4×12",
-      chargeType: "one-time",
       unitOfMeasure: "SHT",
       listPrice: 21.4,
       cost: 17.6,
@@ -2454,7 +1999,6 @@ export function specimenQuote(): Quote {
     product({
       sku: "SUB-ELEC-ROUGH",
       name: "Electrical rough-in — subcontract",
-      chargeType: "one-time",
       costType: "subcontract",
       unitOfMeasure: "LS",
       listPrice: 14_800,
@@ -2470,7 +2014,6 @@ export function specimenQuote(): Quote {
     unitPriceOverride: null,
     wastePercentOverride: null,
     selectedOptions: options,
-    termMonths: 0,
     description: "",
     parentId: null,
     sortOrder,
@@ -2482,8 +2025,8 @@ export function specimenQuote(): Quote {
       line("DRY-5812-4X12", 180, 8, [], 1),
       line("SUB-ELEC-ROUGH", 1, 0, [], 2),
     ],
-    { currency: "USD", termMonths: 36, discountPercent: 0, taxPercent: 8.5, shipping: 0 },
-    { products: new Map(products.map(entry => [entry.id, entry])), priceBook: null, rules: [] },
+    { currency: "USD", markupPercent: 0, overheadPercent: 10, discountPercent: 0, taxPercent: 8.5, shipping: 0 },
+    { products: new Map(products.map(entry => [entry.id, entry])) },
   );
 
   const today = new Date();
@@ -2523,9 +2066,9 @@ export function specimenQuote(): Quote {
       },
       paymentTerms: "Net 30",
     },
-    priceBookId: "",
     currency: "USD",
-    termMonths: 6,
+    markupPercent: 0,
+    overheadPercent: 10,
     discountPercent: 0,
     taxPercent: 8.5,
     shipping: 0,
@@ -2536,8 +2079,6 @@ export function specimenQuote(): Quote {
     internalNotes: "",
     lines: priced.lines,
     totals: priced.totals,
-    approvals: [],
-    approverIds: [],
     ownerId: "",
     sharedWith: [],
     sentAt: today.toISOString(),

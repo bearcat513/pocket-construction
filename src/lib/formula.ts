@@ -1,11 +1,10 @@
 /**
- * The expression language behind pricing rules, approval policy and product
- * validation.
+ * The expression language behind a catalogue item's `validate` rules.
  *
- * Commercial policy changes far more often than software does — "20% off
- * above 500 seats", "three-year terms carry an 8% uplift", "services may not
- * exceed 15% of the software total" — so the policy is data, written as
- * expressions, rather than code someone has to deploy.
+ * What an item may be sold as changes more often than software does — "not
+ * worth mobilising for fewer than four sheets", "a sound mat needs at least
+ * two options" — so the rule is data, written as an expression, rather than
+ * code someone has to deploy.
  *
  * That makes the evaluator security-relevant, and it is built accordingly:
  * expressions are tokenized, parsed into an AST and walked by hand. There is
@@ -14,9 +13,9 @@
  * price formula are the same kind of expression and the same parser handles
  * both:
  *
- *   quantity * unitPrice                          a price
- *   quantity >= 500 && family == 0                a condition
- *   if(termMonths >= 36, unitPrice * 0.8, unitPrice)   either
+ *   quantity * 2                                  a number
+ *   quantity >= 4 && option.sound_mat             a condition
+ *   if(selectedCount > 2, quantity >= 10, 1)      either
  *
  * It runs identically in the browser (live validation and preview totals as
  * the rep types) and on the server (which is the authority on what is stored),
@@ -311,8 +310,8 @@ function collectRefs(node: FormulaNode, into: Set<string>): void {
 
 /**
  * Parses an expression, and — when `available` is supplied — checks every
- * variable against it, so a typo in a pricing rule is caught while it is being
- * written rather than on the quote it silently mispriced.
+ * variable against it, so a typo in a rule is caught while it is being written
+ * rather than on the quote it silently let through.
  */
 export function parseFormula(expression: string, available?: Iterable<string>): ParseResult {
   const trimmed = expression.trim();
@@ -453,10 +452,9 @@ function evaluate(node: FormulaNode, vars: Record<string, unknown>): Value {
  * Evaluates a parsed expression. `null` means the result is not a finite
  * number — a divide by zero, or a variable that was not numeric.
  *
- * Callers decide what `null` means for them: a pricing rule that cannot be
- * computed does not fire (`src/lib/pricing.ts`), and an approval condition
- * that cannot be computed does not approve anything (`src/lib/approvals.ts`).
- * Neither silently substitutes a number.
+ * Callers decide what `null` means for them: a `validate` rule that cannot be
+ * computed is not satisfied (`src/lib/configurator.ts`). Nothing silently
+ * substitutes a number.
  */
 export function evaluateFormula(node: FormulaNode, vars: Record<string, unknown>, decimals?: number): number | null {
   const result = evaluate(node, vars);

@@ -31,6 +31,7 @@ import {
   type ProposalTemplate,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { DEFAULT_CURRENCY } from "@/lib/money";
 
 type Props = {
   accounts: Account[];
@@ -66,7 +67,7 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
   const [search, setSearch] = useState("");
   const [bucket, setBucket] = useState<AgingBucket | "">("");
   const [status, setStatus] = useState<InvoiceStatus | "">("");
-  const [currency, setCurrency] = useState<CurrencyCode>(preferences.defaultCurrency);
+  const [currency, setCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY);
 
   const asOf = today();
 
@@ -88,9 +89,9 @@ export function ReceivablesView({ accounts, templates, preferences, onError, onN
   /** Currencies actually in use, so the selector offers only real choices. */
   const currencies = useMemo(() => {
     const seen = new Set<CurrencyCode>(invoices?.map(invoice => invoice.currency) ?? []);
-    seen.add(preferences.defaultCurrency);
+    seen.add(DEFAULT_CURRENCY);
     return [...seen].sort();
-  }, [invoices, preferences.defaultCurrency]);
+  }, [invoices, DEFAULT_CURRENCY]);
 
   const report = useMemo(() => agingReport(invoices ?? [], currency, asOf), [invoices, currency, asOf]);
 

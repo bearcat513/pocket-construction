@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AccountsView } from "@/components/app/AccountsView";
 import { CustomerDetail } from "@/components/app/CustomerDetail";
 import { DEFAULT_PREFERENCES } from "@/lib/preferences";
-import { EMPTY_ADDRESS, type Account, type AccountContact, type PriceBook } from "@/lib/types";
+import { EMPTY_ADDRESS, type Account, type AccountContact } from "@/lib/types";
 
 const contact = (name: string, overrides: Partial<AccountContact> = {}): AccountContact => ({
   id: `con_${name.toLowerCase().replace(/\W+/g, "")}`,
@@ -39,7 +39,6 @@ const harbour = (): Account => ({
   shippingAddress: { ...EMPTY_ADDRESS, line1: "3400 Pier 80 Access Road", city: "San Francisco" },
   shippingSameAsBilling: false,
   currency: "USD",
-  priceBookId: "pb_1",
   paymentTerms: "Net 30",
   paymentTermDays: 30,
   creditLimit: 0,
@@ -63,22 +62,6 @@ const meridian = (): Account => ({
   notes: "",
 });
 
-const priceBook = (): PriceBook => ({
-  id: "pb_1",
-  name: "Global list",
-  description: "",
-  currency: "USD",
-  isDefault: true,
-  active: true,
-  validFrom: "",
-  validTo: "",
-  entries: [],
-  ownerId: "u",
-  sharedWith: [],
-  createdAt: "",
-  updatedAt: "",
-});
-
 const noop = () => {};
 const asyncNoop = async () => {};
 
@@ -86,7 +69,6 @@ const list = (accounts: Account[]) =>
   renderToStaticMarkup(
     <AccountsView
       accounts={accounts}
-      priceBooks={[priceBook()]}
       preferences={DEFAULT_PREFERENCES}
       openId={null}
       onOpen={noop}
@@ -143,8 +125,7 @@ describe("a customer's own page", () => {
     renderToStaticMarkup(
       <CustomerDetail
         account={account}
-        priceBooks={[priceBook()]}
-        preferences={DEFAULT_PREFERENCES}
+          preferences={DEFAULT_PREFERENCES}
         onBack={noop}
         onEdit={noop}
         onOpenQuote={noop}
@@ -164,7 +145,6 @@ describe("a customer's own page", () => {
     expect(html).toContain("1200 Embarcadero");
     expect(html).toContain("3400 Pier 80 Access Road");
     expect(html).toContain("Net 30");
-    expect(html).toContain("Global list");
   });
 
   test("the history is marked as still being read rather than as empty", () => {

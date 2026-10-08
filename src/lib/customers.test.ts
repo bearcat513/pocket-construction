@@ -31,9 +31,9 @@ const quote = (
     version: 1,
     supersedesId: null,
     customer: { accountId: "acc_1", name: "Harbour" },
-    priceBookId: "",
     currency: "USD" as CurrencyCode,
-    termMonths: 12,
+    markupPercent: 0,
+    overheadPercent: 0,
     discountPercent: 0,
     taxPercent: 0,
     shipping: 0,
@@ -41,7 +41,6 @@ const quote = (
     notes: "",
     internalNotes: "",
     totals: { grandTotal },
-    approverIds: [],
     ownerId: "u",
     sharedWith: [],
     sentAt: "",
@@ -49,7 +48,6 @@ const quote = (
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     lineCount: 1,
-    pendingApprovals: 0,
     ...overrides,
   }) as unknown as QuoteSummary;
 
@@ -76,7 +74,6 @@ const account = (name: string, overrides: Partial<Account> = {}): Account => ({
   shippingAddress: { ...EMPTY_ADDRESS },
   shippingSameAsBilling: true,
   currency: "USD",
-  priceBookId: "",
   paymentTerms: "",
   paymentTermDays: 30,
   creditLimit: 0,
@@ -97,10 +94,9 @@ describe("what a customer has come to", () => {
     const stats = customerStats(
       [
         quote("draft", 100),
-        quote("in_review", 200),
-        quote("approved", 400),
-        // An approval that came back is still a deal being worked.
-        quote("rejected", 800),
+        quote("draft", 200),
+        quote("draft", 400),
+        quote("draft", 800),
         quote("sent", 1600),
         quote("accepted", 10),
         quote("declined", 20),

@@ -1,9 +1,9 @@
 /**
  * Installing the worked example from `src/lib/samples.ts`.
  *
- * One call fills an empty account with a catalogue, the policy around it, three
- * clients and their jobs, seven proposal templates, a quote that actually trips the
- * approval ladder and a receivables book spread across the aging — so the
+ * One call fills an empty account with a catalogue, three clients and their
+ * jobs, seven proposal templates, an estimate priced from that catalogue and
+ * a receivables book spread across the aging — so the
  * first thing a new account sees is the app doing its job rather than nine
  * empty lists.
  *
@@ -20,23 +20,17 @@ import {
   SAMPLE_ACCOUNTS,
   SAMPLE_CATALOG_SOURCES,
   SAMPLE_INVOICES,
-  SAMPLE_PRICE_BOOKS,
-  SAMPLE_PRICING_RULES,
   SAMPLE_PRODUCTS,
   SAMPLE_PROJECTS,
   SAMPLE_QUOTE,
   SAMPLE_TEMPLATES,
-  sampleApprovalRules,
 } from "../lib/samples";
 import { defaultSelection } from "../lib/configurator";
 import { round } from "../lib/money";
 import {
   localId,
   readAccount,
-  readApprovalRule,
   readCatalogSource,
-  readPriceBook,
-  readPricingRule,
   readProduct,
   readProject,
   readProposalTemplate,
@@ -44,25 +38,19 @@ import {
 import type { PriceableLine } from "../lib/pricing";
 import {
   createAccount,
-  createApprovalRule,
   createCatalogSource,
-  createPriceBook,
-  createPricingRule,
   createProduct,
   createProject,
   createProposalTemplate,
   listAccounts,
-  listApprovalRules,
   listInvoices,
-  listPriceBooks,
-  listPricingRules,
   listCatalogSources,
   listProducts,
   listProjects,
   listProposalTemplates,
   nextProjectNumber,
 } from "./db";
-import { createPricedQuote } from "./quotes";
+import { createPricedQuote, type QuoteDefaults } from "./quotes";
 import { createBlankInvoice, discardInvoice, issueInvoice, recordPayment } from "./invoices";
 import { addDays, today } from "../lib/receivable";
 import { ApiError } from "./http";
@@ -76,11 +64,12 @@ export type SeedReport = {
 };
 
 /**
- * `approverEmail` is the installing account's own address, so the approval
- * ladder can be walked end to end by one person in a demo. The sample's own
- * documentation says to point it at real colleagues afterwards.
+ * `ownerEmail` is the installing account's own address, which the sample jobs
+ * name as their project manager and superintendent so one person can walk
+ * them. `defaults` is the account's settings — the sample estimate is priced
+ * under its markup and overhead like any other new one.
  */
-export async function installSample(token: string, approverEmail: string, validDays: number): Promise<SeedReport> {
+export async function installSample(token: string, ownerEmail: string, defaults: QuoteDefaults): Promise<SeedReport> {
   const created: Record<string, number> = {};
   const skipped: Record<string, number> = {};
   const notes: string[] = [];
@@ -106,61 +95,6 @@ export async function installSample(token: string, approverEmail: string, validD
     await createProduct(token, parsed.value);
     haveSku.add(parsed.value.sku);
     count(created, "products");
-  }
-
-  const existingBooks = await listPriceBooks(token);
-  const haveBook = new Set(existingBooks.map(book => book.name.toLowerCase()));
-  // A second default book would quietly change which prices new quotes use.
-  const haveDefault = existingBooks.some(book => book.isDefault);
-
-  for (const sample of SAMPLE_PRICE_BOOKS) {
-    const parsed = readPriceBook(sample);
-    if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.name}): ${parsed.error}`, 500);
-
-    if (haveBook.has(parsed.value.name.toLowerCase())) {
-      count(skipped, "priceBooks");
-      continue;
-    }
-    if (parsed.value.isDefault && haveDefault) {
-      parsed.value.isDefault = false;
-      notes.push(`"${parsed.value.name}" was installed without the default flag — you already have a default book.`);
-    }
-    await createPriceBook(token, parsed.value);
-    haveBook.add(parsed.value.name.toLowerCase());
-    count(created, "priceBooks");
-  }
-
-  /* -------------------------------- policy -------------------------------- */
-
-  const havePricingRule = new Set((await listPricingRules(token)).map(rule => rule.name.toLowerCase()));
-  for (const sample of SAMPLE_PRICING_RULES) {
-    const parsed = readPricingRule(sample);
-    if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.name}): ${parsed.error}`, 500);
-    if (havePricingRule.has(parsed.value.name.toLowerCase())) {
-      count(skipped, "pricingRules");
-      continue;
-    }
-    await createPricingRule(token, parsed.value);
-    count(created, "pricingRules");
-  }
-
-  const haveApprovalRule = new Set((await listApprovalRules(token)).map(rule => rule.name.toLowerCase()));
-  for (const sample of sampleApprovalRules(approverEmail)) {
-    const parsed = readApprovalRule(sample);
-    if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.name}): ${parsed.error}`, 500);
-    if (haveApprovalRule.has(parsed.value.name.toLowerCase())) {
-      count(skipped, "approvalRules");
-      continue;
-    }
-    await createApprovalRule(token, parsed.value);
-    count(created, "approvalRules");
-  }
-
-  if (created.approvalRules) {
-    notes.push(
-      `The sample approval rules all name you (${approverEmail}) as the approver, so you can walk a quote ` +
-        "through the whole ladder on your own. Point them at colleagues once there are some.",
-    );
   }
 
   /* ------------------------------- customers ------------------------------ */
@@ -204,10 +138,10 @@ export async function installSample(token: string, approverEmail: string, validD
       number: await nextProjectNumber(token),
       accountId: client?.id ?? "",
       accountName: client?.name ?? "",
-      // The installing account runs its own jobs in the sample, for the same
-      // reason it approves its own estimates: so one person can walk it.
-      projectManager: approverEmail,
-      superintendent: approverEmail,
+      // The installing account runs its own jobs in the sample, so one person
+      // can walk it.
+      projectManager: ownerEmail,
+      superintendent: ownerEmail,
     });
     if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.name}): ${parsed.error}`, 500);
 
@@ -274,7 +208,6 @@ export async function installSample(token: string, approverEmail: string, validD
         // Fall back to the product's own defaults if the sample named options
         // that the installed product does not have.
         selectedOptions: sample.options.length ? [...sample.options] : defaultSelection(product),
-        termMonths: 0,
         description: "",
         parentId: null,
         sortOrder: index,
@@ -290,9 +223,9 @@ export async function installSample(token: string, approverEmail: string, validD
         name: SAMPLE_QUOTE.name,
         accountId: account.id,
         projectId: project?.id ?? "",
-        priceBookId: "",
-        currency: "USD",
-        termMonths: SAMPLE_QUOTE.termMonths,
+        // The settings' own, like any new estimate.
+        markupPercent: null,
+        overheadPercent: null,
         discountPercent: 0,
         taxPercent: account.taxPercent,
         shipping: 0,
@@ -301,13 +234,10 @@ export async function installSample(token: string, approverEmail: string, validD
         internalNotes: SAMPLE_QUOTE.internalNotes,
       },
       lines,
-      validDays,
+      defaults,
     );
     quoteId = result.quote.id;
     count(created, "quotes");
-    notes.push(
-      `“${result.quote.name}” is deep enough to need approval — submit it and you will see the ladder work.`,
-    );
   } else if (!account) {
     notes.push("The sample quote was skipped: its customer already exists under a different name.");
   }

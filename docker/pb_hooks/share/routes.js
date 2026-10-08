@@ -15,8 +15,6 @@ module.exports.register = () => {
   routerAdd("POST", shares, e => require(`${__hooks}/lib/sharing.js`).add(e), $apis.requireAuth());
   routerAdd("DELETE", shares, e => require(`${__hooks}/lib/sharing.js`).remove(e), $apis.requireAuth());
 
-  routerAdd("POST", "/api/build/approvers/{id}", e => require(`${__hooks}/lib/approvers.js`).stamp(e), $apis.requireAuth());
-
   // Who this instance's accounts are — see lib/directory.js for what that
   // exposes and how to turn it off.
   routerAdd("GET", "/api/build/directory", e => require(`${__hooks}/lib/directory.js`).list(e), $apis.requireAuth());

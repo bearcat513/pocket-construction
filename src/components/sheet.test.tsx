@@ -14,7 +14,6 @@ import { expect, test, describe } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Sheet } from "@/components/ui/sheet";
 import { LineConfigurator } from "@/components/app/LineConfigurator";
-import { PriceBookEditor } from "@/components/app/PriceBookEditor";
 import { CatalogSourceEditor } from "@/components/app/CatalogSourceEditor";
 import { ProductEditor } from "@/components/app/ProductEditor";
 import { ProjectEditor } from "@/components/app/ProjectEditor";
@@ -25,7 +24,7 @@ import { BookingSettingsEditor } from "@/components/app/Appointments";
 import { DEFAULT_BOOKING_SETTINGS } from "@/lib/booking";
 import { SITE_SLOTS } from "@/lib/site";
 import { specimenQuote } from "@/lib/samples";
-import { EMPTY_MATERIAL, type PriceBook, type Product } from "@/lib/types";
+import { EMPTY_MATERIAL, type Product } from "@/lib/types";
 
 const product = (): Product => ({
   id: "prd_1",
@@ -33,16 +32,10 @@ const product = (): Product => ({
   name: "Platform",
   description: "Core platform",
   family: "Software",
-  chargeType: "recurring",
-  billingPeriod: "monthly",
   unitOfMeasure: "EA",
   listPrice: 120,
   cost: 28,
-  currency: "USD",
   active: true,
-  minQuantity: 1,
-  maxQuantity: 0,
-  floorDiscountPercent: 20,
   costType: "material",
   wasteFactorPercent: 0,
   purchaseMultiple: 0,
@@ -63,25 +56,7 @@ const product = (): Product => ({
   rules: [],
   components: [],
   volumeTiers: [{ minQuantity: 25, maxQuantity: null, kind: "percent", value: 10 }],
-  attributes: { SLA: "99.9%" },
   ownerId: "u",
-  sharedWith: [],
-  createdAt: "",
-  updatedAt: "",
-});
-
-const priceBook = (): PriceBook => ({
-  id: "pb_1",
-  name: "Global list",
-  description: "",
-  currency: "USD",
-  isDefault: true,
-  active: true,
-  validFrom: "",
-  validTo: "",
-  entries: [{ sku: "PLAT", unitPrice: 120, minPrice: 72, active: true }],
-  ownerId: "u",
-  sharedWith: [],
   createdAt: "",
   updatedAt: "",
 });
@@ -121,17 +96,10 @@ describe("every form is a panel", () => {
       () => renderToStaticMarkup(<ProductEditor product={product()} products={[product()]} onSave={asyncNoop} onClose={noop} />),
     ],
     [
-      "price book editor",
-      () =>
-        renderToStaticMarkup(
-          <PriceBookEditor book={priceBook()} products={[product()]} onSave={asyncNoop} onClose={noop} />,
-        ),
-    ],
-    [
       "product picker",
       () =>
         renderToStaticMarkup(
-          <ProductPicker products={[product()]} currency="USD" locale="en-US" onPick={noop} onClose={noop} />,
+          <ProductPicker products={[product()]} currency="USD" locale="en-US" markupPercent={15} onPick={noop} onClose={noop} />,
         ),
     ],
     [
@@ -143,7 +111,7 @@ describe("every form is a panel", () => {
             line={{ ...specimenQuote().lines[0]!, productId: "prd_1", selectedOptions: ["std"] }}
             currency="USD"
             locale="en-US"
-            quoteTermMonths={12}
+            markupPercent={15}
             onSave={noop}
             onClose={noop}
           />,
@@ -165,9 +133,9 @@ describe("every form is a panel", () => {
       () =>
         renderToStaticMarkup(
           <ShareDialog
-            kind="products"
-            id="prd_1"
-            title="Platform"
+            kind="quotes"
+            id="qte_1"
+            title="EST-2026-0001"
             viewerEmail="me@example.com"
             directory={[{ id: "u1", email: "other@example.com", name: "Other Person" }]}
             onClose={noop}
@@ -233,11 +201,9 @@ describe("what stays a modal", () => {
     // thing to hand.
     const forms = [
       "app/ProductEditor",
-      "app/PriceBookEditor",
       "app/AccountsView",
       "app/ProjectEditor",
       "app/CatalogSourceEditor",
-      "app/RulesView",
       "app/LineConfigurator",
       "app/ProductPicker",
       "app/ShareDialog",

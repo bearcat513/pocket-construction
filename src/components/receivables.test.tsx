@@ -36,7 +36,6 @@ const account = (): Account => ({
   shippingAddress: { ...EMPTY_ADDRESS, city: "San Francisco" },
   shippingSameAsBilling: true,
   currency: "USD",
-  priceBookId: "",
   paymentTerms: "Net 30",
   paymentTermDays: 30,
   creditLimit: 250_000,

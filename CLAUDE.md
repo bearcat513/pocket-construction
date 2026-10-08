@@ -107,10 +107,21 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 ## This project
 
-A construction estimating and project-billing app: **projects** (the jobs), a building-material
-**catalogue** (waste factors, purchase multiples, CSI divisions, coverage, assemblies), price books,
-pricing and approval rules, **estimates**, proposal documents, the receivables ledger the accepted
-ones turn into, and **supplier feeds** that keep the catalogue's costs current.
+A construction estimating and project-billing app for **one company**: **projects** (the jobs), a
+building-material **catalogue** (waste factors, purchase multiples, CSI divisions, coverage,
+assemblies), **estimates**, proposal documents, the receivables ledger the accepted ones turn into,
+and **supplier feeds** that keep the catalogue's costs current.
+
+**Commercial policy is three numbers, not a rule engine.** Markup, overhead and tax live in the
+account's preferences (`markupPercent`, `overheadPercent`, `defaultTaxPercent`) and are *copied onto
+each quote when it is created* — `Quote.markupPercent` / `overheadPercent` beside `taxPercent` — so
+changing them never reprices an estimate already sent. Markup prices only an item whose `listPrice`
+is 0 (cost × (1 + markup)), which is what lets a feed's cost update reach the price; overhead is
+charged on the discounted subtotal and is its own totals line (`overheadAmount`). There are no
+price books, no pricing or approval rules, no recurring/term billing and one currency
+(`DEFAULT_CURRENCY`, USD) — `1750000014_simplify.js` removed them. A quote goes draft → sent →
+accepted/declined; don't reintroduce an approval status or a per-customer price list without being
+asked.
 
 **A record is called one thing in the code and another on screen, on purpose.** The stored types stay
 `Product`, `Quote` and `Account`; the UI says *item*, *estimate* and *client*. Renaming 32k lines of
@@ -125,8 +136,8 @@ Compose (`bun run docker:up`).
 own credential — an httpOnly cookie, an `Authorization` header, or an `X-API-Key` — and the
 collection rules decide what they may see. The server holds no credentials and can grant nothing on
 its own. Never reintroduce a superuser client for ordinary reads and writes; if something needs
-privilege, it belongs in `docker/pb_hooks/` as a route, the way sharing, approver stamping, key
-issuing and Telegram do.
+privilege, it belongs in `docker/pb_hooks/` as a route, the way sharing, key issuing and Telegram
+do.
 
 **An API key is a credential, not a second access model.** `site_` plus 40 random characters; only
 its SHA-256 is stored, hidden, so the raw value exists in the issuing response and nowhere else. A
@@ -170,10 +181,11 @@ ignored and overwritten. The engine is pure and lives in `src/lib/`, so the brow
 feedback and the server runs the same code for the record — never fork them. For an invoice the
 stakes are sharper: a client that could set its own balance could mark its own debts paid.
 
-- `src/lib/pricing.ts` — the pricing pipeline, and `PRICING_VARIABLES` for the rule editors
+- `src/lib/pricing.ts` — the pricing pipeline, and `sellPrice` (list price, or cost plus markup)
+  for anything on screen that shows an item's price — never read `listPrice` directly for that
 - `src/lib/money.ts` — round at every step, to the currency's precision; sum rounded numbers only
-- `src/lib/formula.ts` — the expression language (no `eval`), shared by pricing, approvals and
-  product validation
+- `src/lib/formula.ts` — the expression language (no `eval`) behind a catalogue item's `validate`
+  rules
 - `src/lib/configurator.ts` — option groups and configuration rules
 - `src/lib/units.ts` — **the take-off math, and the thing to understand before touching a line.** A
   construction line carries two quantities: the `quantity` an estimator measured, and the
@@ -215,9 +227,6 @@ stakes are sharper: a client that could set its own balance could mark its own d
 - `src/lib/customers.ts` — the customer roll-up (open pipeline, won, win rate) and the searching
   and sorting behind the customers list. Pure, and it **never adds up two currencies**: a quote
   written in something other than the account's currency is counted and reported, never summed
-- `src/lib/approvals.ts` — the approval ladder. Levels are cumulative, an edit voids decisions, and
-  a rule asks several people with separate approve/reject quorums. A request's `status` is derived
-  by `requestStatus` from the votes it carries, never assigned
 - `src/lib/receivable.ts` — accounts receivable, and the one file to read before touching an
   invoice. **Nothing about an invoice's condition is stored**: only `state` (draft / issued / void)
   is recorded, and `invoiceStatus` derives open, part paid, paid and overdue from the ledger and the
@@ -263,14 +272,14 @@ stakes are sharper: a client that could set its own balance could mark its own d
   and **nothing ever issued is deleted** — invoice numbers have to be gapless, so a draft may be
   discarded and anything past that is voided. Voiding is refused once a payment exists; an
   over-credit is refused because unlike an overpayment it is always a typo on your own side.
-  `invoiceQuote` bills a sent or accepted quote for its whole contract value, with the quote
-  discount, any adjustment and shipping as their own lines, and warns rather than hides it when the
-  total lands a penny off the quote's. Billing a subscription period by period is a billing
-  schedule — the obvious next layer, and deliberately not here
+  `invoiceQuote` bills a sent or accepted quote for its whole value — each line at its order
+  quantity, with the quote discount, the overhead and shipping as their own lines — and warns
+  rather than hides it when the total lands a penny off the quote's
 - `src/server/db.ts` — the collections. Every call takes a token and is async
-- `src/server/share.ts` — proxies to PocketBase's `/api/build/...` hook routes: sharing, approver
-  stamping, and the account directory (`GET /api/directory`, id/email/name only). All three need to
-  read `users`, which no user token may do, so they live in `docker/pb_hooks/`
+- `src/server/share.ts` — proxies to PocketBase's `/api/build/...` hook routes: sharing (quotes,
+  invoices, projects, feeds, templates — never catalogue items or clients) and the account
+  directory (`GET /api/directory`, id/email/name only). Both need to read `users`, which no user
+  token may do, so they live in `docker/pb_hooks/`
 - `docker/pb_migrations/` — collections, ownership fields, API rules. A schema change is a new
   migration file here, not a dashboard edit, or a fresh volume comes up without it. **A JSON field
   reaches the JSVM as a byte array (`types.JSONRaw`)**, so reading one, mutating it and saving runs
@@ -444,9 +453,8 @@ the UI writes to `localStorage`.
 
 **A catalogue item's user-facing shape.** `costType` (material / labor / equipment / subcontract /
 other) is how a job cost report adds it up and is a real column, beside `division` and
-`manufacturer`, because the materials list filters on all three. `chargeType` still means *when* it
-is billed and still matters here: equipment is rented by the month, which is what `recurring` is for.
-`unitOfMeasure` is a closed list (`UNITS_OF_MEASURE`) rather than free text, because a catalogue that
+`manufacturer`, because the materials list filters on all three. Equipment rented by the month is an
+ordinary item in `MO` (or `DAY`/`WK`) — the quantity is how many months. `unitOfMeasure` is a closed list (`UNITS_OF_MEASURE`) rather than free text, because a catalogue that
 cannot tell "SF" from "sq ft" will happily multiply a price per square foot by a quantity in sheets.
 Everything else the materials work added — the waste factor, the purchase multiple, the
 `MaterialSpec` and the sync `provenance` — lives in the existing `definition` JSON and needed no

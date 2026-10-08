@@ -1,7 +1,7 @@
 /**
  * Reference fields.
  *
- * Anywhere this app asks which *existing* product, family or approver you
+ * Anywhere this app asks which *existing* item, family or person you
  * mean, it offers the list rather than an empty box. A typo in one of those
  * does not fail loudly — a bundle component whose SKU matches nothing is
  * silently skipped when the bundle is expanded, and the quote simply comes out
@@ -19,16 +19,10 @@ const product = (sku: string, name: string, overrides: Partial<Product> = {}): P
     name,
     description: "",
     family: "Framing",
-    chargeType: "recurring",
-    billingPeriod: "monthly",
     unitOfMeasure: "EA",
     listPrice: 100,
     cost: 30,
-    currency: "USD",
     active: true,
-    minQuantity: 1,
-    maxQuantity: 0,
-    floorDiscountPercent: 0,
     optionGroups: [],
     rules: [],
     components: [],
@@ -96,7 +90,7 @@ describe("the control", () => {
   });
 
   test("a value the list does not have is still shown, never hidden", () => {
-    // A price book may legitimately price a SKU this workspace has not created
+    // An assembly may legitimately name a SKU this workspace has not created
     // yet — the importer warns about that rather than refusing it, so the UI
     // must not quietly blank the field either.
     const html = renderToStaticMarkup(<Combobox value="FROM-ELSEWHERE" onChange={() => {}} options={options} />);
@@ -116,11 +110,6 @@ describe("no reference field is left as an open text box", () => {
   const references: { file: string; binding: string; what: string }[] = [
     { file: "ProductEditor", binding: "value={component.sku}", what: "an assembly component" },
     { file: "ProductEditor", binding: "value={draft.family}", what: "a catalogue item's family" },
-    { file: "PriceBookEditor", binding: "value={entry.sku}", what: "a price book entry" },
-    { file: "RulesView", binding: "value={draft.appliesToSku}", what: "a pricing rule's product" },
-    { file: "RulesView", binding: "value={draft.appliesToFamily}", what: "a pricing rule's family" },
-    // An approval rule names a list now, so the dropdown is what adds to it.
-    { file: "RulesView", binding: 'aria-label="Add an approver"', what: "an approval rule's approvers" },
     // A project names a client and two people.
     { file: "ProjectEditor", binding: "value={draft.accountId}", what: "a project's client" },
     { file: "ProjectEditor", binding: "value={draft.projectManager}", what: "a project's manager" },
@@ -160,12 +149,5 @@ describe("no reference field is left as an open text box", () => {
     const source = await Bun.file(new URL("./app/CatalogSourceEditor.tsx", import.meta.url)).text();
     expect(source).toContain("inspectCatalogSource");
     expect(source).toContain("inspection?.columns");
-  });
-
-  test("the datalist the price book leaned on is gone", async () => {
-    // A datalist is a suggestion on a text box, not a list — it still accepts
-    // anything and offers nothing on a touch keyboard.
-    const source = await Bun.file(new URL("./app/PriceBookEditor.tsx", import.meta.url)).text();
-    expect(source).not.toContain("datalist");
   });
 });

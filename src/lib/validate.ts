@@ -18,13 +18,13 @@
  * numbers are clamped into their legal range rather than refused, and only
  * things that cannot be repaired — a missing name, a formula that will not
  * parse, two products claiming one SKU — are errors. A quantity of −5 is a
- * slip; a pricing rule that references a variable that does not exist is a
- * policy that would silently never fire.
+ * slip; a validation rule that references a variable that does not exist is
+ * a rule that would silently never hold.
  *
- * **Validate formulas at the door.** A pricing rule, an approval condition and
- * a product validation rule are all parsed here, against the variables their
- * scope actually offers. A formula that cannot work is caught by the person
- * writing it rather than by the quote it mispriced a month later.
+ * **Validate formulas at the door.** A catalogue item's validation rules are
+ * parsed here, against the variables they can actually see. A formula that
+ * cannot work is caught by the person writing it rather than by the quote it
+ * let through a month later.
  */
 import {
   APPOINTMENT_STATES,
@@ -53,9 +53,9 @@ import {
   type SiteText,
   type SlotDefinition,
 } from "./site";
-import { asCurrency, atLeastZero, clampPercent, isCurrency } from "./money";
+import { asCurrency, atLeastZero, clampPercent, DEFAULT_CURRENCY, isCurrency } from "./money";
+import { clampMarkup } from "./pricing";
 import { asUnit, atLeastZeroQuantity } from "./units";
-import { lineVariableNames, quoteVariableNames } from "./pricing";
 import { MAX_PDF_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NAME_LENGTH } from "./document";
 import { DEFAULT_MARGINS, PAGE_SIZES } from "./pdf";
 import { FONT_FAMILIES } from "./pdfFonts";
@@ -74,10 +74,6 @@ import {
 } from "./pdfTemplate";
 import {
   ACCOUNT_STATUSES,
-  APPROVAL_METRICS,
-  BILLING_PERIODS,
-  CHARGE_TYPES,
-  COMPARATORS,
   CONTRACT_TYPES,
   COST_TYPES,
   CSI_DIVISION_NAMES,
@@ -91,7 +87,6 @@ import {
   CURRENCIES,
   EMPTY_ADDRESS,
   PAYMENT_METHODS,
-  PRICING_RULE_TARGETS,
   PRODUCT_RULE_KINDS,
   PROPOSAL_FORMATS,
   TEMPLATE_KINDS,
@@ -99,12 +94,9 @@ import {
   type Account,
   type AccountContact,
   type Address,
-  type ApprovalRule,
-  type BillingPeriod,
   type BundleComponent,
   type CatalogProvenance,
   type CatalogSource,
-  type ChargeType,
   type CostType,
   type MaterialSpec,
   type Project,
@@ -115,9 +107,6 @@ import {
   type InvoiceLine,
   type InvoicePayment,
   type OptionGroup,
-  type PriceBook,
-  type PriceBookEntry,
-  type PricingRule,
   type Product,
   type ProductOption,
   type ProductRule,
@@ -197,8 +186,6 @@ const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback
 /** Variables a product's `validate` rule may use, given the option keys it has. */
 const productRuleVariables = (optionKeys: string[]) => [
   "quantity",
-  "term",
-  "termMonths",
   "selectedCount",
   ...optionKeys.map(key => `option.${key}`),
 ];
@@ -380,7 +367,7 @@ function readProvenance(raw: unknown): CatalogProvenance | null {
 }
 
 /** The shape a product is written in, before ownership and timestamps. */
-export type ProductInput = Omit<Product, "id" | "ownerId" | "sharedWith" | "createdAt" | "updatedAt">;
+export type ProductInput = Omit<Product, "id" | "ownerId" | "createdAt" | "updatedAt">;
 
 export function readProduct(raw: unknown): Validated<ProductInput> {
   const input = asRecord(raw);
@@ -416,33 +403,16 @@ export function readProduct(raw: unknown): Validated<ProductInput> {
     rules.push(parsed.value);
   }
 
-  const minQuantity = integer(input.minQuantity, 1, 0, 1_000_000_000);
-  const maxQuantity = integer(input.maxQuantity, 0, 0, 1_000_000_000);
-  if (maxQuantity > 0 && maxQuantity < minQuantity) {
-    return invalid(`${name}: the maximum quantity (${maxQuantity}) is below the minimum (${minQuantity}).`);
-  }
-
-  const attributes: Record<string, string> = {};
-  for (const [key, value] of Object.entries(asRecord(input.attributes)).slice(0, 50)) {
-    attributes[text(key, 60)] = text(value, 500);
-  }
-
   return valid({
     sku,
     name,
     description: text(input.description, 5_000),
     family: text(input.family, 120),
     costType: oneOf(input.costType, COST_TYPES, "material") as CostType,
-    chargeType: oneOf(input.chargeType, CHARGE_TYPES, "one-time") as ChargeType,
-    billingPeriod: oneOf(input.billingPeriod, BILLING_PERIODS, "monthly") as BillingPeriod,
     unitOfMeasure: asUnit(input.unitOfMeasure),
     listPrice: atLeastZero(number(input.listPrice, 0)),
     cost: atLeastZero(number(input.cost, 0)),
-    currency: asCurrency(input.currency),
     active: flag(input.active, true),
-    minQuantity,
-    maxQuantity,
-    floorDiscountPercent: percent(input.floorDiscountPercent),
     wasteFactorPercent: percent(input.wasteFactorPercent),
     // Sold in any quantity is 0, not 1, so that "unset" and "sold singly" are
     // the same answer to the only question anything asks of it.
@@ -455,179 +425,6 @@ export function readProduct(raw: unknown): Validated<ProductInput> {
     volumeTiers: (Array.isArray(input.volumeTiers) ? input.volumeTiers : [])
       .map(readTier)
       .sort((a, b) => a.minQuantity - b.minQuantity),
-    attributes,
-  });
-}
-
-/* ------------------------------ price books ------------------------------ */
-
-function readEntry(raw: unknown): PriceBookEntry {
-  const input = asRecord(raw);
-  const floor = input.minPrice === null || input.minPrice === undefined ? null : atLeastZero(number(input.minPrice, 0));
-  return {
-    sku: text(input.sku, 60).toUpperCase(),
-    unitPrice: atLeastZero(number(input.unitPrice, 0)),
-    minPrice: floor,
-    active: flag(input.active, true),
-  };
-}
-
-export type PriceBookInput = Omit<PriceBook, "id" | "ownerId" | "sharedWith" | "createdAt" | "updatedAt">;
-
-export function readPriceBook(raw: unknown): Validated<PriceBookInput> {
-  const input = asRecord(raw);
-
-  const name = text(input.name, 200);
-  if (!name) return invalid("A price book needs a name.");
-
-  if (input.currency !== undefined && !isCurrency(input.currency)) {
-    return invalid(`"${String(input.currency)}" is not a currency this app can price in (${CURRENCIES.join(", ")}).`);
-  }
-
-  const entries = (Array.isArray(input.entries) ? input.entries : []).map(readEntry).filter(entry => entry.sku);
-
-  // One price per SKU per book, or "the price" stops being a single fact.
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    if (seen.has(entry.sku)) return invalid(`Price book "${name}" lists ${entry.sku} more than once.`);
-    seen.add(entry.sku);
-    if (entry.minPrice !== null && entry.minPrice !== undefined && entry.minPrice > entry.unitPrice) {
-      return invalid(`${entry.sku}: the floor (${entry.minPrice}) is above the price (${entry.unitPrice}).`);
-    }
-  }
-
-  const validFrom = isoDate(input.validFrom);
-  const validTo = isoDate(input.validTo);
-  if (validFrom && validTo && validTo < validFrom) {
-    return invalid(`Price book "${name}" ends (${validTo}) before it starts (${validFrom}).`);
-  }
-
-  return valid({
-    name,
-    description: text(input.description, 2_000),
-    currency: asCurrency(input.currency),
-    isDefault: flag(input.isDefault, false),
-    active: flag(input.active, true),
-    validFrom,
-    validTo,
-    entries,
-  });
-}
-
-/* ----------------------------- pricing rules ----------------------------- */
-
-export type PricingRuleInput = Omit<PricingRule, "id" | "ownerId" | "createdAt" | "updatedAt">;
-
-export function readPricingRule(raw: unknown): Validated<PricingRuleInput> {
-  const input = asRecord(raw);
-
-  const name = text(input.name, 200);
-  if (!name) return invalid("A pricing rule needs a name.");
-
-  const scope = oneOf(input.scope, ["line", "quote"] as const, "line");
-  const variables = scope === "line" ? lineVariableNames() : quoteVariableNames();
-
-  const condition = text(input.condition, 2_000);
-  if (condition) {
-    const error = checkFormula(condition, variables, `"${name}" condition`);
-    if (error) return invalid(error);
-  }
-
-  const expression = text(input.expression, 2_000);
-  if (!expression) return invalid(`"${name}" needs an expression — what the rule sets.`);
-  const error = checkFormula(expression, variables, `"${name}"`);
-  if (error) return invalid(error);
-
-  const target = oneOf(input.target, PRICING_RULE_TARGETS, "discountPercent");
-  if (scope === "quote" && target === "unitPrice") {
-    return invalid(`"${name}" targets a unit price, which a quote-scoped rule has no way to set.`);
-  }
-
-  return valid({
-    name,
-    description: text(input.description, 2_000),
-    scope,
-    condition,
-    target,
-    expression,
-    appliesToFamily: text(input.appliesToFamily, 120),
-    appliesToSku: text(input.appliesToSku, 60).toUpperCase(),
-    priority: integer(input.priority, 100, 0, 100_000),
-    active: flag(input.active, true),
-    message: text(input.message, 500),
-  });
-}
-
-/* ---------------------------- approval rules ----------------------------- */
-
-export type ApprovalRuleInput = Omit<ApprovalRule, "id" | "ownerId" | "createdAt" | "updatedAt">;
-
-/**
- * The most people one rule may ask.
- *
- * Matches `MAX_APPROVERS` in docker/pb_hooks/lib/approvers.js and the
- * `approvers` relation's `maxSelect`: an approver who cannot be stamped onto
- * the quote cannot see it, so the three numbers have to agree.
- */
-export const MAX_APPROVERS = 50;
-
-export function readApprovalRule(raw: unknown): Validated<ApprovalRuleInput> {
-  const input = asRecord(raw);
-
-  const name = text(input.name, 200);
-  if (!name) return invalid("An approval rule needs a name.");
-
-  // `approverEmail` is the shape this had before a rule could name several
-  // people; a stored rule or an exported file from then still reads.
-  const rawApprovers = Array.isArray(input.approvers)
-    ? input.approvers
-    : input.approverEmail !== undefined
-      ? [input.approverEmail]
-      : [];
-
-  const approvers = [...new Set(rawApprovers.map(email).filter(Boolean))].slice(0, MAX_APPROVERS);
-  if (!approvers.length) {
-    return invalid(`"${name}" needs at least one approver — a rule nobody can answer blocks a quote forever.`);
-  }
-
-  const bad = approvers.find(address => !address.includes("@"));
-  if (bad) return invalid(`"${bad}" is not an email address.`);
-
-  // A quorum larger than the room could never be met. Clamped rather than
-  // refused: removing an approver from a rule that wanted all of them is a
-  // reasonable edit, and it should not become an error message.
-  const approvalsRequired = integer(input.approvalsRequired, 1, 1, approvers.length);
-  const rejectionsRequired = integer(input.rejectionsRequired, 1, 1, approvers.length);
-
-  const scope = oneOf(input.scope, ["line", "quote"] as const, "quote");
-  const metric = oneOf(input.metric, APPROVAL_METRICS, "discountPercent");
-
-  const condition = text(input.condition, 2_000);
-  if (metric === "custom") {
-    if (!condition) return invalid(`"${name}" is a custom rule, so it needs a condition.`);
-    // The approval engine's variables are a superset of the pricing ones, so
-    // validating against the wider set is what matches what it will see.
-    const available =
-      scope === "line"
-        ? [...lineVariableNames(), "marginPercent", "margin", "costTotal", "floorDiscountPercent", "effectiveDiscountPercent"]
-        : [...quoteVariableNames(), "margin", "netTotal", "grandTotal", "monthlyRecurringTotal", "annualRecurringTotal"];
-    const error = checkFormula(condition, available, `"${name}" condition`);
-    if (error) return invalid(error);
-  }
-
-  return valid({
-    name,
-    scope,
-    metric,
-    comparator: oneOf(input.comparator, COMPARATORS, ">"),
-    threshold: number(input.threshold, 0),
-    condition,
-    level: integer(input.level, 1, 1, 20),
-    approvers,
-    approvalsRequired,
-    rejectionsRequired,
-    message: text(input.message, 500),
-    active: flag(input.active, true),
   });
 }
 
@@ -763,8 +560,8 @@ export function readAccount(raw: unknown): Validated<AccountInput> {
         ? readAddress(input.shippingAddress)
         : { ...EMPTY_ADDRESS },
     shippingSameAsBilling,
-    currency: asCurrency(input.currency),
-    priceBookId: text(input.priceBookId, 40),
+    // One company, one currency: whatever the body says.
+    currency: DEFAULT_CURRENCY,
     paymentTerms,
     paymentTermDays: readPaymentTermDays(input.paymentTermDays, paymentTerms),
     creditLimit: atLeastZero(number(input.creditLimit, 0)),
@@ -894,7 +691,6 @@ function readPolicy(raw: unknown): SyncPolicy {
     markupPercent: bounded(input.markupPercent, 0, 0, 1_000),
     defaultFamily: text(input.defaultFamily, 120),
     defaultCostType: oneOf(input.defaultCostType, COST_TYPES, "material"),
-    currency: asCurrency(input.currency),
   };
 }
 
@@ -1067,7 +863,10 @@ function readTotalsRows(raw: unknown, kind: TemplateKind): TotalsRow[] {
   const rows = (Array.isArray(raw) ? raw : [])
     .map((entry): TotalsRow | null => {
       const row = asRecord(entry);
-      const field = String(row.field ?? "");
+      // Quote-scoped pricing rules used to land in "quoteAdjustment"; overhead
+      // took that line's place, so a template written then still prints it.
+      const named = String(row.field ?? "");
+      const field = kind === "quote" && named === "quoteAdjustment" ? "overheadAmount" : named;
       // Silently dropping an unknown field is what keeps `cost` and `margin`
       // out of a customer-facing document even if a hand-written body asks
       // for them — see the note atop src/lib/pdfTemplate.ts.
@@ -1299,7 +1098,6 @@ export function readQuoteLine(raw: unknown, index: number): Validated<QuoteLineI
     // ("this job wastes nothing"), so an absent value must not clamp to zero.
     wastePercentOverride: waste === null || waste === undefined || waste === "" ? null : percent(waste),
     selectedOptions: stringList(input.selectedOptions, 60),
-    termMonths: integer(input.termMonths, 0, 0, 600),
     description: text(input.description, 2_000),
     parentId: text(input.parentId, 60) || null,
     sortOrder: number(input.sortOrder, index),
@@ -1338,9 +1136,13 @@ export type QuoteHeaderInput = {
   accountId: string | null;
   /** The job this estimate is for. Empty is ordinary — a bid often precedes one. */
   projectId: string;
-  priceBookId: string;
-  currency: ReturnType<typeof asCurrency>;
-  termMonths: number;
+  /**
+   * The quote's own markup and overhead. `null` when the body left them out,
+   * which the server reads as "the settings" on a new quote and "unchanged"
+   * on an existing one.
+   */
+  markupPercent: number | null;
+  overheadPercent: number | null;
   discountPercent: number;
   taxPercent: number;
   shipping: number;
@@ -1355,18 +1157,14 @@ export function readQuoteHeader(raw: unknown): Validated<QuoteHeaderInput> {
   const name = text(input.name, 200);
   if (!name) return invalid("A quote needs a name.");
 
-  if (input.currency !== undefined && !isCurrency(input.currency)) {
-    return invalid(`"${String(input.currency)}" is not a currency this app can price in (${CURRENCIES.join(", ")}).`);
-  }
+  const given = (value: unknown) => value !== undefined && value !== null && value !== "";
 
   return valid({
     name,
     accountId: text(input.accountId, 40) || null,
     projectId: text(input.projectId, 40),
-    priceBookId: text(input.priceBookId, 40),
-    currency: asCurrency(input.currency),
-    // 0 is legal and means "one-time charges only".
-    termMonths: integer(input.termMonths, 12, 0, 600),
+    markupPercent: given(input.markupPercent) ? clampMarkup(number(input.markupPercent, 0)) : null,
+    overheadPercent: given(input.overheadPercent) ? percent(input.overheadPercent) : null,
     discountPercent: percent(input.discountPercent),
     taxPercent: percent(input.taxPercent),
     shipping: atLeastZero(number(input.shipping, 0)),

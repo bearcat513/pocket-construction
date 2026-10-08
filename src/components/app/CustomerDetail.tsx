@@ -27,14 +27,12 @@ import {
   type AccountContact,
   type Address,
   type InvoiceSummary,
-  type PriceBook,
   type QuoteSummary,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
   account: Account;
-  priceBooks: PriceBook[];
   preferences: Preferences;
   onBack: () => void;
   onEdit: () => void;
@@ -60,7 +58,6 @@ type Props = {
  */
 export function CustomerDetail({
   account,
-  priceBooks,
   preferences,
   onBack,
   onEdit,
@@ -73,7 +70,6 @@ export function CustomerDetail({
   const [invoices, setInvoices] = useState<InvoiceSummary[] | null>(null);
 
   const format = formatters(account.currency, preferences.locale);
-  const book = priceBooks.find(candidate => candidate.id === account.priceBookId);
 
   useEffect(() => {
     let live = true;
@@ -143,7 +139,6 @@ export function CustomerDetail({
       >
         <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2">
           <AccountStatusBadge status={account.status} />
-          <Badge tone="outline">{account.currency}</Badge>
           {account.taxExempt ? (
             <Badge tone="info">tax exempt</Badge>
           ) : account.taxPercent > 0 ? (
@@ -190,7 +185,6 @@ export function CustomerDetail({
 
         <dl className="grid gap-x-6 gap-y-3 px-4 py-3 text-sm md:grid-cols-2 xl:grid-cols-3">
           <Fact label="Payment terms" value={account.paymentTerms} />
-          <Fact label="Price book" value={book ? `${book.name} (${book.currency})` : "The default book"} />
           <Fact label="Website" value={account.website} Icon={Globe} />
           <AddressFact label="Billing address" address={account.billingAddress} Icon={MapPin} />
           <AddressFact
@@ -381,10 +375,7 @@ export function CustomerDetail({
                       </span>
                     </Td>
                     <Td>
-                      <div className="flex items-center gap-1.5">
-                        <StatusBadge status={quote.status} />
-                        {quote.pendingApprovals > 0 && <Badge tone="pending">{quote.pendingApprovals} pending</Badge>}
-                      </div>
+                      <StatusBadge status={quote.status} />
                     </Td>
                     <Td numeric className="text-muted-foreground">
                       {quote.lineCount}

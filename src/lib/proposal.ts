@@ -48,7 +48,6 @@ export const PROPOSAL_TOKENS: TokenDescription[] = [
   { token: "quote.status", description: "Where it is in its life" },
   { token: "quote.date", description: "The day it was created" },
   { token: "quote.validUntil", description: "The day the pricing expires" },
-  { token: "quote.termMonths", description: "Subscription length in months" },
   { token: "quote.currency", description: "Currency code" },
   { token: "quote.notes", description: "The customer-facing note on the quote" },
   { token: "customer.name", description: "The account's name" },
@@ -66,13 +65,10 @@ export const PROPOSAL_TOKENS: TokenDescription[] = [
   { token: "totals.subtotal", description: "After line discounts" },
   { token: "totals.discount", description: "Every discount, as one amount" },
   { token: "totals.discountPercent", description: "The effective discount off list" },
+  { token: "totals.overhead", description: "Overhead on the discounted subtotal" },
   { token: "totals.shipping", description: "Shipping" },
   { token: "totals.tax", description: "Tax" },
   { token: "totals.grandTotal", description: "What the customer pays" },
-  { token: "totals.mrr", description: "Monthly recurring revenue" },
-  { token: "totals.arr", description: "Annual recurring revenue" },
-  { token: "totals.tcv", description: "Total contract value over the term" },
-  { token: "totals.oneTime", description: "Non-recurring charges" },
 ];
 
 /** Tokens usable inside `{{#lines}}…{{/lines}}`. */
@@ -87,8 +83,6 @@ export const LINE_TOKENS: TokenDescription[] = [
   { token: "line.listPrice", description: "Unit price before discounts" },
   { token: "line.unitPrice", description: "Unit price charged" },
   { token: "line.discountPercent", description: "Discount on the line" },
-  { token: "line.term", description: "This line's term in months" },
-  { token: "line.billing", description: "How it is billed" },
   { token: "line.total", description: "What the line comes to" },
 ];
 
@@ -110,7 +104,6 @@ function resolve(context: ProposalContext, format: ProposalFormat): Record<strin
     "quote.status": quote.status.replace("_", " "),
     "quote.date": isoDate(quote.createdAt),
     "quote.validUntil": isoDate(quote.validUntil),
-    "quote.termMonths": String(quote.termMonths),
     "quote.currency": currency,
     "quote.notes": quote.notes,
     "customer.name": quote.customer.name,
@@ -127,15 +120,12 @@ function resolve(context: ProposalContext, format: ProposalFormat): Record<strin
     "seller.email": context.sellerEmail,
     "totals.listTotal": money(totals.listTotal),
     "totals.subtotal": money(totals.subtotal),
-    "totals.discount": money(totals.listTotal - totals.netTotal),
+    "totals.discount": money(totals.lineDiscountAmount + totals.quoteDiscountAmount),
     "totals.discountPercent": formatPercent(totals.effectiveDiscountPercent),
+    "totals.overhead": money(totals.overheadAmount),
     "totals.shipping": money(totals.shipping),
     "totals.tax": money(totals.taxAmount),
     "totals.grandTotal": money(totals.grandTotal),
-    "totals.mrr": money(totals.monthlyRecurringTotal),
-    "totals.arr": money(totals.annualRecurringTotal),
-    "totals.tcv": money(totals.totalContractValue),
-    "totals.oneTime": money(totals.oneTimeTotal),
   };
 }
 
@@ -153,8 +143,6 @@ function resolveLine(line: PricedLine, index: number, currency: CurrencyCode, lo
     "line.listPrice": money(line.listUnitPrice),
     "line.unitPrice": money(line.unitPrice),
     "line.discountPercent": formatPercent(line.effectiveDiscountPercent),
-    "line.term": line.chargeType === "recurring" ? `${line.termMonths} months` : "—",
-    "line.billing": line.chargeType === "recurring" ? line.billingPeriod : line.chargeType,
     "line.total": money(line.netTotal),
   };
 }

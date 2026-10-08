@@ -1,29 +1,21 @@
-import { ShieldCheck, ShieldAlert, TrendingUp } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ApprovalRequest, QuoteTotals } from "@/lib/types";
+import type { QuoteTotals } from "@/lib/types";
 import type { Formatter } from "./common";
 
 type Props = {
   totals: QuoteTotals;
   format: Formatter;
   showMargin: boolean;
-  /** What submitting would ask for, worked out live as the quote is edited. */
-  approvalsRequired: ApprovalRequest[];
-  termMonths: number;
+  /** The estimate's own overhead rate, for the line's label. */
+  overheadPercent: number;
 };
 
 /**
- * The totals, and what they will cost the rep in process.
- *
- * The approval preview is the reason this panel is worth its space. A rep who
- * learns at submit time that 32% needs the VP has already told the customer
- * 32%; showing it while the discount is being typed is the difference between
- * a guardrail and a complaint.
+ * The totals, in the order they are worked out, and — when margin is on
+ * screen — what the job leaves once it is built.
  */
-export function TotalsPanel({ totals, format, showMargin, approvalsRequired, termMonths }: Props) {
-  const recurring = totals.netTotal - totals.oneTimeTotal;
-
+export function TotalsPanel({ totals, format, showMargin, overheadPercent }: Props) {
   return (
     <div className="space-y-4">
       <div className="panel rounded-lg border shadow-[0_1px_2px_var(--cast)]">
@@ -36,12 +28,8 @@ export function TotalsPanel({ totals, format, showMargin, approvalsRequired, ter
           {totals.quoteDiscountAmount !== 0 && (
             <Line label="Estimate discount" value={`−${format.money(totals.quoteDiscountAmount)}`} muted />
           )}
-          {totals.quoteAdjustment !== 0 && (
-            <Line
-              label="Adjustments"
-              value={`${totals.quoteAdjustment > 0 ? "+" : ""}${format.money(totals.quoteAdjustment)}`}
-              muted
-            />
+          {totals.overheadAmount !== 0 && (
+            <Line label={`Overhead (${format.percent(overheadPercent)})`} value={format.money(totals.overheadAmount)} muted />
           )}
           {totals.shipping !== 0 && <Line label="Shipping" value={format.money(totals.shipping)} muted />}
           {totals.taxAmount !== 0 && <Line label="Tax" value={format.money(totals.taxAmount)} muted />}
@@ -63,82 +51,20 @@ export function TotalsPanel({ totals, format, showMargin, approvalsRequired, ter
         </div>
       </div>
 
-      {/* Revenue shape — the numbers the business reports, not the customer. */}
-      {(recurring !== 0 || totals.oneTimeTotal !== 0) && (
+      {/* The numbers the business reads, not the client. */}
+      {showMargin && totals.lineCount > 0 && (
         <div className="panel rounded-lg border px-4 py-3 text-sm">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            <TrendingUp className="size-3.5" /> Contract
+            <TrendingUp className="size-3.5" /> Margin
           </p>
-          <Line label="One-time" value={format.money(totals.oneTimeTotal)} muted />
-          <Line label={`Recurring (${termMonths} months)`} value={format.money(recurring)} muted />
-          <Line label="Monthly recurring" value={format.money(totals.monthlyRecurringTotal)} />
-          <Line label="Annual recurring" value={format.money(totals.annualRecurringTotal)} />
-          <Line label="Total contract value" value={format.money(totals.totalContractValue)} />
-          {showMargin && (
-            <>
-              <div className="my-2 border-t" />
-              <Line label="Cost" value={format.money(totals.costTotal)} muted />
-              <Line
-                label="Margin"
-                value={`${format.money(totals.margin)} · ${format.percent(totals.marginPercent)}`}
-                className={cn(totals.marginPercent < 30 && "text-destructive")}
-              />
-            </>
-          )}
+          <Line label="Cost" value={format.money(totals.costTotal)} muted />
+          <Line
+            label="Margin"
+            value={`${format.money(totals.margin)} · ${format.percent(totals.marginPercent)}`}
+            className={cn(totals.marginPercent < 30 && "text-destructive")}
+          />
         </div>
       )}
-
-      <ApprovalPreview approvals={approvalsRequired} />
-    </div>
-  );
-}
-
-/** What submitting this quote would ask for, before it is submitted. */
-function ApprovalPreview({ approvals }: { approvals: ApprovalRequest[] }) {
-  if (!approvals.length) {
-    return (
-      <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-xs">
-        <ShieldCheck className="mt-px size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <div>
-          <p className="font-medium text-emerald-700 dark:text-emerald-300">No approval needed</p>
-          <p className="text-muted-foreground">This quote is within policy and can be sent as soon as it is submitted.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Grouped by level, because that is the order they will actually be asked.
-  const levels = [...new Set(approvals.map(request => request.level))].sort((a, b) => a - b);
-
-  return (
-    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-        <ShieldAlert className="size-4" />
-        Needs {approvals.length} approval{approvals.length === 1 ? "" : "s"}
-      </p>
-      <ul className="space-y-2 text-xs">
-        {levels.map(level => (
-          <li key={level}>
-            <p className="text-muted-foreground">Level {level}</p>
-            <ul className="mt-0.5 space-y-1">
-              {approvals
-                .filter(request => request.level === level)
-                .map(request => (
-                  <li key={request.id} className="flex flex-wrap items-baseline gap-1.5">
-                    <Badge tone="pending">{request.ruleName}</Badge>
-                    <span className="text-muted-foreground">{request.reason}</span>
-                    <span className="text-muted-foreground">
-                      ·{" "}
-                      {request.approverEmails.length > 1
-                        ? `${request.approvalsRequired} of ${request.approverEmails.length}: ${request.approverEmails.join(", ")}`
-                        : request.approverEmails[0]}
-                    </span>
-                  </li>
-                ))}
-            </ul>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

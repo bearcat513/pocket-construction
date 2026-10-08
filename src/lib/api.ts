@@ -34,11 +34,7 @@ import type {
   InvoiceCredit,
   InvoicePayment,
   InvoiceSummary,
-  ApprovalRequest,
-  ApprovalRule,
-  PriceBook,
   PricedLine,
-  PricingRule,
   Product,
   Project,
   ProposalTemplate,
@@ -51,13 +47,10 @@ import type {
 } from "./types";
 import type {
   AccountInput,
-  ApprovalRuleInput,
   CatalogSourceInput,
   CreditInput,
   InvoiceHeaderInput,
   PaymentInput,
-  PriceBookInput,
-  PricingRuleInput,
   ProductInput,
   ProjectInput,
   ProposalTemplateInput,
@@ -167,8 +160,6 @@ export type Shares = {
 };
 
 export type Shareable =
-  | "products"
-  | "price-books"
   | "quotes"
   | "invoices"
   | "projects"
@@ -199,9 +190,9 @@ export type QuoteBody = {
   accountId: string | null;
   /** The job this estimate is for. Empty is ordinary — a bid often precedes one. */
   projectId: string;
-  priceBookId: string;
-  currency: string;
-  termMonths: number;
+  /** Left out, a new quote takes the settings' markup and overhead. */
+  markupPercent?: number;
+  overheadPercent?: number;
   discountPercent: number;
   taxPercent: number;
   shipping: number;
@@ -213,16 +204,11 @@ export type QuoteBody = {
 
 export type SavedQuote = { quote: Quote; issues: string[]; warnings: string[] };
 
-export type SubmitResult = SavedQuote & { required: ApprovalRequest[]; unresolved: string[] };
-
 export type QuotePreview = {
   lines: PricedLine[];
   totals: QuoteTotals;
-  priceBookId: string;
   issues: string[];
   warnings: string[];
-  approvalsRequired: ApprovalRequest[];
-  autoApproved: boolean;
 };
 
 export type ConfigureResult = {
@@ -276,7 +262,6 @@ export type Meta = {
   reachable: boolean;
   accounts: number | null;
   products: number | null;
-  priceBooks: number | null;
   quotes: number | null;
   invoices: number | null;
   proposalTemplates: number | null;
@@ -350,7 +335,7 @@ export const api = {
   unlinkTelegram: () => send<TelegramStatus>("/api/telegram/chat", "DELETE"),
   sendTelegramTest: () => send<TelegramStatus>("/api/telegram/test", "POST"),
 
-  /** Everyone with an account here — what the approver and share pickers offer. */
+  /** Everyone with an account here — what the share and project pickers offer. */
   /* --------------------------------- docs -------------------------------- */
 
   /** What `/docs` renders, and what Postman and friends import. */
@@ -358,7 +343,7 @@ export const api = {
   openApiFileName: "sitelines.openapi.json",
   openApiText: () => fetchText(OPENAPI_URL, "The OpenAPI document"),
 
-  /** Everyone with an account here — what the approver and share pickers offer. */
+  /** Everyone with an account here — what the share and project pickers offer. */
   directory: () => request<{ users: DirectoryUser[]; truncated: boolean }>("/api/directory"),
   getPreferences: () => request<Preferences>("/api/preferences"),
   savePreferences: (preferences: Preferences) => send<Preferences>("/api/preferences", "PUT", preferences),
@@ -378,42 +363,22 @@ export const api = {
   createProduct: (payload: ProductInput) => send<Product>("/api/products", "POST", payload),
   updateProduct: (id: string, payload: ProductInput) => send<Product>(`/api/products/${id}`, "PUT", payload),
   deleteProduct: (id: string) => send<{ ok: true }>(`/api/products/${id}`, "DELETE"),
-  configure: (id: string, payload: { selectedOptions: string[]; quantity: number; termMonths: number }) =>
+  configure: (id: string, payload: { selectedOptions: string[]; quantity: number }) =>
     send<ConfigureResult>(`/api/products/${id}/configure`, "POST", payload),
 
-  listPriceBooks: () => request<PriceBook[]>("/api/price-books"),
-  createPriceBook: (payload: PriceBookInput) => send<PriceBook>("/api/price-books", "POST", payload),
-  updatePriceBook: (id: string, payload: PriceBookInput) => send<PriceBook>(`/api/price-books/${id}`, "PUT", payload),
-  deletePriceBook: (id: string) => send<{ ok: true }>(`/api/price-books/${id}`, "DELETE"),
 
-  listPricingRules: () => request<PricingRule[]>("/api/pricing-rules"),
-  createPricingRule: (payload: PricingRuleInput) => send<PricingRule>("/api/pricing-rules", "POST", payload),
-  updatePricingRule: (id: string, payload: PricingRuleInput) =>
-    send<PricingRule>(`/api/pricing-rules/${id}`, "PUT", payload),
-  deletePricingRule: (id: string) => send<{ ok: true }>(`/api/pricing-rules/${id}`, "DELETE"),
-
-  listApprovalRules: () => request<ApprovalRule[]>("/api/approval-rules"),
-  createApprovalRule: (payload: ApprovalRuleInput) => send<ApprovalRule>("/api/approval-rules", "POST", payload),
-  updateApprovalRule: (id: string, payload: ApprovalRuleInput) =>
-    send<ApprovalRule>(`/api/approval-rules/${id}`, "PUT", payload),
-  deleteApprovalRule: (id: string) => send<{ ok: true }>(`/api/approval-rules/${id}`, "DELETE"),
-
-  validateFormula: (expression: string, scope: "line" | "quote" | "product", optionKeys?: string[]) =>
-    send<FormulaCheck>("/api/formula/validate", "POST", { expression, scope, optionKeys }),
+  validateFormula: (expression: string, optionKeys?: string[]) =>
+    send<FormulaCheck>("/api/formula/validate", "POST", { expression, optionKeys }),
 
   /* --------------------------------- quotes ------------------------------ */
 
   listQuotes: (limit?: number) => request<QuoteSummary[]>(`/api/quotes${limit === undefined ? "" : `?limit=${limit}`}`),
   searchQuotes: (search: QuoteSearch) => request<QuotePage>(`/api/quotes/search${quoteSearchQuery(search)}`),
-  quotesAwaitingMe: () => request<QuoteSummary[]>("/api/quotes/awaiting"),
   getQuote: (id: string) => request<Quote>(`/api/quotes/${id}`),
   createQuote: (payload: QuoteBody) => send<SavedQuote>("/api/quotes", "POST", payload),
   updateQuote: (id: string, payload: QuoteBody) => send<SavedQuote>(`/api/quotes/${id}`, "PUT", payload),
   deleteQuote: (id: string) => send<{ ok: true }>(`/api/quotes/${id}`, "DELETE"),
   previewQuote: (payload: QuoteBody) => send<QuotePreview>("/api/quotes/preview", "POST", payload),
-  submitQuote: (id: string) => send<SubmitResult>(`/api/quotes/${id}/submit`, "POST"),
-  decideQuote: (id: string, decision: "approved" | "rejected", comment: string) =>
-    send<{ quote: Quote; changed: number }>(`/api/quotes/${id}/decision`, "POST", { decision, comment }),
   setQuoteStatus: (id: string, status: QuoteStatus) => send<Quote>(`/api/quotes/${id}/status`, "POST", { status }),
   reviseQuote: (id: string) => send<SavedQuote>(`/api/quotes/${id}/revise`, "POST"),
 

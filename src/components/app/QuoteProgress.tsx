@@ -11,18 +11,15 @@ import { cn } from "@/lib/utils";
 
 type StepState = "done" | "current" | "failed" | "upcoming";
 
-const STEPS = ["Draft", "Approval", "Sent", "Accepted"] as const;
+const STEPS = ["Draft", "Sent", "Accepted"] as const;
 
-/** Each status, as the state of each of the four steps and what the failed one should be called. */
+/** Each status, as the state of each of the three steps and what the failed one should be called. */
 const PROGRESS: Record<QuoteStatus, { states: StepState[]; failed?: string }> = {
-  draft: { states: ["current", "upcoming", "upcoming", "upcoming"] },
-  rejected: { states: ["current", "failed", "upcoming", "upcoming"], failed: "Rejected" },
-  in_review: { states: ["done", "current", "upcoming", "upcoming"] },
-  approved: { states: ["done", "done", "current", "upcoming"] },
-  sent: { states: ["done", "done", "done", "current"] },
-  accepted: { states: ["done", "done", "done", "done"] },
-  declined: { states: ["done", "done", "done", "failed"], failed: "Declined" },
-  expired: { states: ["done", "done", "done", "failed"], failed: "Expired" },
+  draft: { states: ["current", "upcoming", "upcoming"] },
+  sent: { states: ["done", "done", "current"] },
+  accepted: { states: ["done", "done", "done"] },
+  declined: { states: ["done", "done", "failed"], failed: "Declined" },
+  expired: { states: ["done", "done", "failed"], failed: "Expired" },
 };
 
 export function QuoteProgress({ status }: { status: QuoteStatus }) {

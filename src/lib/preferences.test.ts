@@ -20,38 +20,37 @@ describe("normalizePreferences", () => {
 
   test("out-of-range numbers are clamped, not rejected", () => {
     const result = normalizePreferences({
-      defaultTermMonths: 99_999,
+      markupPercent: 99_999,
+      overheadPercent: -3,
       quoteValidDays: -5,
       quoteListLimit: 1,
       defaultTaxPercent: 250,
     });
 
-    expect(result.defaultTermMonths).toBe(PREFERENCE_LIMITS.termMonths.max);
+    expect(result.markupPercent).toBe(PREFERENCE_LIMITS.markupPercent.max);
+    expect(result.overheadPercent).toBe(0);
     expect(result.quoteValidDays).toBe(PREFERENCE_LIMITS.validDays.min);
     expect(result.quoteListLimit).toBe(PREFERENCE_LIMITS.quoteList.min);
     expect(result.defaultTaxPercent).toBe(100);
   });
 
-  test("a tax rate keeps its decimals; a term does not", () => {
-    const result = normalizePreferences({ defaultTaxPercent: 8.25, defaultTermMonths: 12.7 });
+  test("tax, markup and overhead keep their decimals; a validity period does not", () => {
+    const result = normalizePreferences({ defaultTaxPercent: 8.25, markupPercent: 17.5, overheadPercent: 7.5, quoteValidDays: 12.7 });
     expect(result.defaultTaxPercent).toBe(8.25);
-    expect(result.defaultTermMonths).toBe(12);
+    expect(result.markupPercent).toBe(17.5);
+    expect(result.overheadPercent).toBe(7.5);
+    expect(result.quoteValidDays).toBe(12);
   });
 
   test("unknown keys are dropped", () => {
     expect(normalizePreferences({ ...DEFAULT_PREFERENCES, mischief: true })).not.toHaveProperty("mischief");
   });
 
-  test("a currency this app cannot price in falls back", () => {
-    expect(normalizePreferences({ defaultCurrency: "XYZ" }).defaultCurrency).toBe(DEFAULT_PREFERENCES.defaultCurrency);
-    expect(normalizePreferences({ defaultCurrency: "EUR" }).defaultCurrency).toBe("EUR");
-  });
-
   test("a malformed record id is discarded, a plausible one is kept", () => {
     // A stale id is harmless — it falls back to "the first one" wherever it is
     // used — but a malformed one should never be stored.
-    expect(normalizePreferences({ defaultPriceBookId: "../../etc" }).defaultPriceBookId).toBe("");
-    expect(normalizePreferences({ defaultPriceBookId: "pb_1a2b3c4d" }).defaultPriceBookId).toBe("pb_1a2b3c4d");
+    expect(normalizePreferences({ defaultProposalTemplateId: "../../etc" }).defaultProposalTemplateId).toBe("");
+    expect(normalizePreferences({ defaultProposalTemplateId: "tpl_1a2b3c4d" }).defaultProposalTemplateId).toBe("tpl_1a2b3c4d");
   });
 
   test("a locale Intl cannot parse is discarded", () => {

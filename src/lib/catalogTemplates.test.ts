@@ -42,11 +42,10 @@ describe("the catalogue templates", () => {
     if (!result.ok) expect(result.error).toContain("no items");
   });
 
-  test("the catalogue file imports cleanly, assembly and price book included", () => {
+  test("the catalogue file imports cleanly, assembly included", () => {
     const result = parseCatalogFile(JSON.parse(body("catalog-template.catalog.json")));
     if (!result.ok) throw new Error(result.error);
     expect(result.catalog.warnings).toEqual([]);
-    expect(result.catalog.priceBooks).toHaveLength(1);
     const assembly = result.catalog.products.find(product => product.components.length);
     expect(assembly?.optionGroups.length).toBeGreaterThan(0);
     expect(assembly?.rules.length).toBeGreaterThan(0);

@@ -1,12 +1,12 @@
 /**
  * The pricing engine is the part of this app that is allowed to be wrong in
  * the most expensive way, so the tests below are written as the questions a
- * finance team would ask: does the total equal the lines, does a floor hold,
- * does a rule fire when it should and only then.
+ * finance team would ask: does the total equal the lines, does markup price
+ * only what has no price, does overhead land where the estimate says it does.
  */
 import { describe, expect, test } from "bun:test";
-import { expandBundle, periodsFor, priceQuote, tierFor, type PricingContext, type QuoteHeader } from "./pricing";
-import type { PriceBook, PricingRule, Product, QuoteLineInput } from "./types";
+import { expandBundle, priceQuote, sellPrice, tierFor, type PricingContext, type QuoteHeader } from "./pricing";
+import type { Product, QuoteLineInput } from "./types";
 import { EMPTY_MATERIAL } from "./types";
 
 /* -------------------------------- fixtures ------------------------------- */
@@ -16,28 +16,20 @@ const product = (overrides: Partial<Product> = {}): Product => ({
   sku: "PLAT",
   name: "Platform",
   description: "",
-  family: "Software",
-  chargeType: "recurring",
-  billingPeriod: "monthly",
+  family: "Framing",
   unitOfMeasure: "EA",
   listPrice: 100,
   cost: 30,
-  currency: "USD",
   active: true,
-  minQuantity: 1,
-  maxQuantity: 0,
-  floorDiscountPercent: 20,
   optionGroups: [],
   rules: [],
   components: [],
   volumeTiers: [],
-  attributes: {},
   costType: "material",
   wasteFactorPercent: 0,
   purchaseMultiple: 0,
   material: { ...EMPTY_MATERIAL },
   ownerId: "u1",
-  sharedWith: [],
   createdAt: "",
   updatedAt: "",
   ...overrides,
@@ -51,7 +43,6 @@ const line = (overrides: Partial<QuoteLineInput> = {}): QuoteLineInput => ({
   unitPriceOverride: null,
   wastePercentOverride: null,
   selectedOptions: [],
-  termMonths: 12,
   description: "",
   parentId: null,
   sortOrder: 0,
@@ -60,84 +51,69 @@ const line = (overrides: Partial<QuoteLineInput> = {}): QuoteLineInput => ({
 
 const header = (overrides: Partial<QuoteHeader> = {}): QuoteHeader => ({
   currency: "USD",
-  termMonths: 12,
+  markupPercent: 0,
+  overheadPercent: 0,
   discountPercent: 0,
   taxPercent: 0,
   shipping: 0,
   ...overrides,
 });
 
-const context = (products: Product[], rules: PricingRule[] = [], priceBook: PriceBook | null = null): PricingContext => ({
+const context = (products: Product[]): PricingContext => ({
   products: new Map(products.map(entry => [entry.id, entry])),
-  priceBook,
-  rules,
-});
-
-const rule = (overrides: Partial<PricingRule> = {}): PricingRule => ({
-  id: "rul_1",
-  name: "Rule",
-  description: "",
-  scope: "line",
-  condition: "",
-  target: "discountPercent",
-  expression: "10",
-  appliesToFamily: "",
-  appliesToSku: "",
-  priority: 10,
-  active: true,
-  message: "",
-  ownerId: "u1",
-  createdAt: "",
-  updatedAt: "",
-  ...overrides,
 });
 
 /* --------------------------------- basics -------------------------------- */
 
 describe("a line's price", () => {
-  test("a monthly subscription is priced across the whole term", () => {
+  test("list price times the quantity", () => {
     const priced = priceQuote([line()], header(), context([product()]));
     const only = priced.lines[0]!;
 
-    expect(only.periods).toBe(12);
     expect(only.unitPrice).toBe(100);
-    // 100/user/month × 10 users × 12 months
-    expect(only.netTotal).toBe(12_000);
-    expect(only.monthlyRecurring).toBe(1_000);
-    expect(only.annualRecurring).toBe(12_000);
-    expect(only.oneTime).toBe(0);
-  });
-
-  test("a one-time product bills once, whatever the term says", () => {
-    const setup = product({ id: "prd_setup", sku: "SETUP", chargeType: "one-time", listPrice: 2_500, cost: 1_000 });
-    const priced = priceQuote(
-      [line({ productId: "prd_setup", quantity: 1 })],
-      header({ termMonths: 36 }),
-      context([setup]),
-    );
-
-    expect(priced.lines[0]!.periods).toBe(1);
-    expect(priced.lines[0]!.netTotal).toBe(2_500);
-    expect(priced.totals.oneTimeTotal).toBe(2_500);
-    expect(priced.totals.monthlyRecurringTotal).toBe(0);
-  });
-
-  test("annual billing over an 18-month term is a period and a half", () => {
-    const annual = product({ billingPeriod: "annual", listPrice: 1_200 });
-    const priced = priceQuote([line({ quantity: 1, termMonths: 18 })], header(), context([annual]));
-
-    expect(priced.lines[0]!.periods).toBe(1.5);
-    expect(priced.lines[0]!.netTotal).toBe(1_800);
+    expect(only.netTotal).toBe(1_000);
+    expect(only.pricedFromCost).toBe(false);
   });
 
   test("margin comes off cost, not off list", () => {
     const priced = priceQuote([line({ discountPercent: 25 })], header(), context([product()]));
     const only = priced.lines[0]!;
 
-    expect(only.netTotal).toBe(9_000); // 75 × 10 × 12
-    expect(only.costTotal).toBe(3_600); // 30 × 10 × 12
-    expect(only.margin).toBe(5_400);
+    expect(only.netTotal).toBe(750); // 75 × 10
+    expect(only.costTotal).toBe(300); // 30 × 10
+    expect(only.margin).toBe(450);
     expect(only.marginPercent).toBe(60);
+  });
+});
+
+/* -------------------------------- markup --------------------------------- */
+
+describe("markup", () => {
+  test("an item with no list price sells at cost plus the quote's markup", () => {
+    const lumber = product({ listPrice: 0, cost: 40 });
+    const priced = priceQuote([line()], header({ markupPercent: 25 }), context([lumber]));
+    const only = priced.lines[0]!;
+
+    expect(only.listUnitPrice).toBe(50);
+    expect(only.pricedFromCost).toBe(true);
+    expect(only.netTotal).toBe(500);
+    expect(only.margin).toBe(100);
+  });
+
+  test("an item somebody priced by hand keeps its price, whatever the markup", () => {
+    const priced = priceQuote([line()], header({ markupPercent: 25 }), context([product()]));
+    expect(priced.lines[0]!.listUnitPrice).toBe(100);
+  });
+
+  test("a markup is never negative and never absurd", () => {
+    expect(sellPrice({ listPrice: 0, cost: 10 }, -50, "USD").price).toBe(10);
+    expect(sellPrice({ listPrice: 0, cost: 10 }, 50_000, "USD").price).toBe(110);
+  });
+
+  test("an item with neither a price nor a cost says so", () => {
+    const free = product({ listPrice: 0, cost: 0 });
+    const priced = priceQuote([line()], header({ markupPercent: 20 }), context([free]));
+    expect(priced.warnings[0]).toContain("no list price and no cost");
   });
 });
 
@@ -170,7 +146,7 @@ describe("configured options", () => {
 
   test("a factor scales the list price and a delta is added after it", () => {
     const priced = priceQuote(
-      [line({ selectedOptions: ["prem", "sso"], quantity: 1, termMonths: 1 })],
+      [line({ selectedOptions: ["prem", "sso"], quantity: 1 })],
       header(),
       context([configurable]),
     );
@@ -187,7 +163,7 @@ describe("configured options", () => {
     // whose options add value reads as a *markup* — the quote's list total
     // lands below its own subtotal and "% off list" comes out negative.
     const priced = priceQuote(
-      [line({ selectedOptions: ["prem", "sso"], quantity: 10, discountPercent: 20, termMonths: 1 })],
+      [line({ selectedOptions: ["prem", "sso"], quantity: 10, discountPercent: 20 })],
       header(),
       context([configurable]),
     );
@@ -211,7 +187,7 @@ describe("configured options", () => {
     expect(priced.issues.length).toBe(1);
     // It still produces a number: a rep needs to see the consequence of the
     // thing they have half-finished.
-    expect(priced.lines[0]!.netTotal).toBe(12_000);
+    expect(priced.lines[0]!.netTotal).toBe(1_000);
   });
 });
 
@@ -227,11 +203,11 @@ describe("volume tiers", () => {
   });
 
   test("the band a quantity lands in sets the whole line's price", () => {
-    const mid = priceQuote([line({ quantity: 200, termMonths: 1 })], header(), context([tiered]));
+    const mid = priceQuote([line({ quantity: 200 })], header(), context([tiered]));
     expect(mid.lines[0]!.unitPrice).toBe(90);
     expect(mid.lines[0]!.netTotal).toBe(18_000);
 
-    const top = priceQuote([line({ quantity: 500, termMonths: 1 })], header(), context([tiered]));
+    const top = priceQuote([line({ quantity: 500 })], header(), context([tiered]));
     expect(top.lines[0]!.unitPrice).toBe(75);
     expect(top.lines[0]!.tier?.kind).toBe("override");
   });
@@ -240,119 +216,15 @@ describe("volume tiers", () => {
     expect(tierFor(tiered.volumeTiers, 10_000)?.value).toBe(75);
     expect(tierFor([], 10)).toBeNull();
   });
-
-  test("periodsFor refuses to invent a term", () => {
-    expect(periodsFor("recurring", "monthly", 0)).toBe(0);
-    expect(periodsFor("usage", "monthly", 24)).toBe(1);
-  });
-});
-
-/* ------------------------------ price books ------------------------------ */
-
-describe("price books", () => {
-  const book: PriceBook = {
-    id: "pb_eu",
-    name: "EU list",
-    description: "",
-    currency: "USD",
-    isDefault: false,
-    active: true,
-    validFrom: "",
-    validTo: "",
-    entries: [{ sku: "PLAT", unitPrice: 80, minPrice: 60 }],
-    ownerId: "u1",
-    sharedWith: [],
-    createdAt: "",
-    updatedAt: "",
-  };
-
-  test("an entry replaces the catalogue price", () => {
-    const priced = priceQuote([line({ termMonths: 1 })], header(), context([product()], [], book));
-    expect(priced.lines[0]!.listUnitPrice).toBe(80);
-    expect(priced.lines[0]!.netTotal).toBe(800);
-  });
-
-  test("nothing may price below the book's floor", () => {
-    const priced = priceQuote([line({ discountPercent: 50, termMonths: 1 })], header(), context([product()], [], book));
-    const only = priced.lines[0]!;
-
-    expect(only.unitPrice).toBe(60); // 80 − 50% would be 40
-    // A warning, not an error: the floor has already done its job, so the
-    // quote is correct and sendable — the rep just needs to know their
-    // discount did not land in full.
-    expect(only.issues).toEqual([]);
-    expect(only.warnings[0]).toContain("may not be sold below 60");
-  });
-
-  test("a quote in a currency the product is not priced in is refused, not guessed", () => {
-    const priced = priceQuote([line()], header({ currency: "EUR" }), context([product()]));
-    expect(priced.issues[0]).toContain("priced in USD and this quote is in EUR");
-  });
-});
-
-/* ------------------------------ pricing rules ---------------------------- */
-
-describe("pricing rules", () => {
-  test("a condition decides whether a rule fires", () => {
-    const volume = rule({
-      name: "Volume break",
-      condition: "quantity >= 100",
-      target: "discountPercent",
-      expression: "15",
-      message: "100+ seats",
-    });
-
-    const small = priceQuote([line({ quantity: 10, termMonths: 1 })], header(), context([product()], [volume]));
-    expect(small.lines[0]!.unitPrice).toBe(100);
-    expect(small.lines[0]!.appliedRules).toEqual([]);
-
-    const large = priceQuote([line({ quantity: 100, termMonths: 1 })], header(), context([product()], [volume]));
-    expect(large.lines[0]!.unitPrice).toBe(85);
-    expect(large.lines[0]!.appliedRules[0]).toMatchObject({ name: "Volume break", from: 0, to: 15 });
-  });
-
-  test("rules chain in priority order, each seeing the last one's work", () => {
-    const rules = [
-      rule({ id: "r2", name: "Second", priority: 20, target: "unitPrice", expression: "unitPrice - 10" }),
-      rule({ id: "r1", name: "First", priority: 10, target: "unitPrice", expression: "unitPrice * 0.9" }),
-    ];
-    const priced = priceQuote([line({ quantity: 1, termMonths: 1 })], header(), context([product()], rules));
-
-    // 100 × 0.9 = 90, then − 10 = 80. The other order would give 81.
-    expect(priced.lines[0]!.unitPrice).toBe(80);
-    expect(priced.lines[0]!.appliedRules.map(applied => applied.name)).toEqual(["First", "Second"]);
-  });
-
-  test("a rule scoped to another family leaves the line alone", () => {
-    const services = rule({ appliesToFamily: "Services", expression: "50" });
-    const priced = priceQuote([line({ termMonths: 1 })], header(), context([product()], [services]));
-    expect(priced.lines[0]!.unitPrice).toBe(100);
-  });
-
-  test("a rule that does not parse is reported, not silently inert", () => {
-    const broken = rule({ name: "Broken", expression: "quantity *" });
-    const priced = priceQuote([line()], header(), context([product()], [broken]));
-    expect(priced.warnings[0]).toContain("“Broken” was skipped");
-  });
-
-  test("a quote-scoped adjustment is not a negative discount", () => {
-    const uplift = rule({ scope: "quote", target: "adjustment", expression: "500", name: "Onboarding uplift" });
-    const priced = priceQuote([line({ termMonths: 1 })], header(), context([product()], [uplift]));
-
-    expect(priced.totals.subtotal).toBe(1_000);
-    expect(priced.totals.quoteDiscountAmount).toBe(0);
-    expect(priced.totals.quoteAdjustment).toBe(500);
-    expect(priced.totals.netTotal).toBe(1_500);
-  });
 });
 
 /* -------------------------------- totals --------------------------------- */
 
 describe("waste factors", () => {
   test("a line is priced on what has to be bought, not on what was measured", () => {
-    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15, chargeType: "one-time" });
+    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15 });
     const priced = priceQuote(
-      [line({ productId: "prd_dry", quantity: 100, termMonths: 0 })],
+      [line({ productId: "prd_dry", quantity: 100 })],
       header(),
       context([drywall]),
     );
@@ -365,8 +237,8 @@ describe("waste factors", () => {
   });
 
   test("the take-off survives a re-price, so waste is never compounded", () => {
-    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15, chargeType: "one-time" });
-    const first = priceQuote([line({ productId: "prd_dry", quantity: 100, termMonths: 0 })], header(), context([drywall]));
+    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15 });
+    const first = priceQuote([line({ productId: "prd_dry", quantity: 100 })], header(), context([drywall]));
     const second = priceQuote(first.lines, header(), context([drywall]));
 
     expect(second.lines[0]!.quantity).toBe(100);
@@ -375,9 +247,9 @@ describe("waste factors", () => {
   });
 
   test("a line override beats the material's factor, and zero means zero", () => {
-    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15, chargeType: "one-time" });
+    const drywall = product({ id: "prd_dry", sku: "DRY", listPrice: 20, cost: 15, wasteFactorPercent: 15 });
     const none = priceQuote(
-      [line({ productId: "prd_dry", quantity: 100, termMonths: 0, wastePercentOverride: 0 })],
+      [line({ productId: "prd_dry", quantity: 100, wastePercentOverride: 0 })],
       header(),
       context([drywall]),
     );
@@ -394,10 +266,9 @@ describe("waste factors", () => {
       cost: 142,
       wasteFactorPercent: 5,
       purchaseMultiple: 0.25,
-      chargeType: "one-time",
     });
     const priced = priceQuote(
-      [line({ productId: "prd_conc", quantity: 12.3, termMonths: 0 })],
+      [line({ productId: "prd_conc", quantity: 12.3 })],
       header(),
       context([concrete]),
     );
@@ -414,7 +285,6 @@ describe("waste factors", () => {
       listPrice: 4,
       cost: 3,
       wasteFactorPercent: 8,
-      chargeType: "one-time",
       volumeTiers: [
         { minQuantity: 0, maxQuantity: 293, kind: "percent", value: 0 },
         { minQuantity: 294, maxQuantity: null, kind: "percent", value: 10 },
@@ -422,7 +292,7 @@ describe("waste factors", () => {
     });
     // 280 measured is 302.4 ordered, which is a banded unit and gets the break.
     const priced = priceQuote(
-      [line({ productId: "prd_stud", quantity: 280, termMonths: 0 })],
+      [line({ productId: "prd_stud", quantity: 280 })],
       header(),
       context([studs]),
     );
@@ -435,25 +305,43 @@ describe("waste factors", () => {
 
 describe("quote totals", () => {
   test("the total is the lines added up, and tax comes last", () => {
-    const setup = product({ id: "prd_setup", sku: "SETUP", chargeType: "one-time", listPrice: 2_500, cost: 500 });
+    const setup = product({ id: "prd_setup", sku: "SETUP", listPrice: 2_500, cost: 500 });
     const priced = priceQuote(
-      [line({ quantity: 10, termMonths: 12 }), line({ id: "ln_2", productId: "prd_setup", quantity: 1, sortOrder: 1 })],
+      [line({ quantity: 10 }), line({ id: "ln_2", productId: "prd_setup", quantity: 1, sortOrder: 1 })],
       header({ discountPercent: 10, taxPercent: 8.25, shipping: 100 }),
       context([product(), setup]),
     );
 
     const totals = priced.totals;
-    expect(totals.subtotal).toBe(14_500); // 12,000 + 2,500
-    expect(totals.quoteDiscountAmount).toBe(1_450);
-    expect(totals.netTotal).toBe(13_050);
-    expect(totals.taxAmount).toBe(1_084.88); // 8.25% of 13,150, half up
-    expect(totals.grandTotal).toBe(14_234.88);
-    expect(totals.totalContractValue).toBe(13_050);
+    expect(totals.subtotal).toBe(3_500); // 1,000 + 2,500
+    expect(totals.quoteDiscountAmount).toBe(350);
+    expect(totals.netTotal).toBe(3_150);
+    expect(totals.taxAmount).toBe(268.13); // 8.25% of 3,250, half up
+    expect(totals.grandTotal).toBe(3_518.13);
   });
 
-  test("the effective discount is what an approver actually reads", () => {
+  test("overhead is charged on the discounted subtotal, and taxed with it", () => {
     const priced = priceQuote(
-      [line({ quantity: 10, discountPercent: 20, termMonths: 1 })],
+      [line({ quantity: 10 })],
+      header({ discountPercent: 10, overheadPercent: 10, taxPercent: 10 }),
+      context([product()]),
+    );
+
+    const totals = priced.totals;
+    expect(totals.subtotal).toBe(1_000);
+    expect(totals.quoteDiscountAmount).toBe(100);
+    expect(totals.overheadAmount).toBe(90); // 10% of 900, not of 1,000
+    expect(totals.netTotal).toBe(990);
+    expect(totals.taxAmount).toBe(99);
+    expect(totals.grandTotal).toBe(1_089);
+    // A charge is not a negative discount.
+    expect(totals.effectiveDiscountPercent).toBe(10);
+    expect(totals.margin).toBe(690);
+  });
+
+  test("the effective discount counts the lines and the quote discount", () => {
+    const priced = priceQuote(
+      [line({ quantity: 10, discountPercent: 20 })],
       header({ discountPercent: 10 }),
       context([product()]),
     );
@@ -491,14 +379,14 @@ describe("bundles", () => {
     });
 
     let counter = 0;
-    const parent = line({ id: "ln_parent", productId: "prd_suite", quantity: 3, termMonths: 1 });
+    const parent = line({ id: "ln_parent", productId: "prd_suite", quantity: 3 });
     const children = expandBundle(parent, suite, new Map([["SUPPORT", support]]), () => `ln_c${++counter}`);
 
     expect(children).toHaveLength(1);
     expect(children[0]).toMatchObject({ productId: "prd_support", quantity: 3, discountPercent: 50, parentId: "ln_parent" });
 
-    const priced = priceQuote([parent, ...children], header({ termMonths: 1 }), context([suite, support]));
-    expect(priced.lines[1]!.netTotal).toBe(30); // 20 × 3 × 50% × 1 month
+    const priced = priceQuote([parent, ...children], header(), context([suite, support]));
+    expect(priced.lines[1]!.netTotal).toBe(30); // 20 × 3 × 50%
     expect(priced.totals.subtotal).toBe(330);
   });
 
@@ -512,9 +400,9 @@ describe("bundles", () => {
 
 describe("rounding", () => {
   test("the total equals the visible lines, to the cent", () => {
-    const odd = product({ listPrice: 33.333, cost: 0, chargeType: "one-time" });
+    const odd = product({ listPrice: 33.333, cost: 0 });
     const priced = priceQuote(
-      [line({ quantity: 3, termMonths: 0 }), line({ id: "ln_2", quantity: 3, sortOrder: 1 })],
+      [line({ quantity: 3 }), line({ id: "ln_2", quantity: 3, sortOrder: 1 })],
       header(),
       context([odd]),
     );
@@ -524,9 +412,4 @@ describe("rounding", () => {
     expect(priced.totals.subtotal).toBe(199.98);
   });
 
-  test("a zero-decimal currency carries no decimals at all", () => {
-    const yen = product({ listPrice: 1_234.5, currency: "JPY", chargeType: "one-time" });
-    const priced = priceQuote([line({ quantity: 1 })], header({ currency: "JPY" }), context([yen]));
-    expect(priced.lines[0]!.netTotal).toBe(1_235);
-  });
 });

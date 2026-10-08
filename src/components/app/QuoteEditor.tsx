@@ -13,7 +13,6 @@ import {
   Save,
   Send,
   Share2,
-  ShieldCheck,
   Trash2,
   Undo2,
   X,
@@ -32,23 +31,17 @@ import { LineConfigurator } from "./LineConfigurator";
 import { ProductPicker } from "./ProductPicker";
 import { QuoteLines } from "./QuoteLines";
 import { TotalsPanel } from "./TotalsPanel";
-import { api, type QuoteBody, type SessionUser } from "@/lib/api";
+import { api, type QuoteBody } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { actionableFor, approvalProgress, evaluateApprovals } from "@/lib/approvals";
 import { defaultSelection } from "@/lib/configurator";
-import { asCurrency } from "@/lib/money";
-import { expandBundle, priceQuote } from "@/lib/pricing";
+import { DEFAULT_CURRENCY } from "@/lib/money";
+import { MAX_MARKUP_PERCENT, expandBundle, priceQuote } from "@/lib/pricing";
 import { localId } from "@/lib/validate";
-import { cn } from "@/lib/utils";
 import type { Preferences } from "@/lib/preferences";
 import {
-  CURRENCIES,
   QUOTE_TRANSITIONS,
   isEditableStatus,
   type Account,
-  type ApprovalRule,
-  type PriceBook,
-  type PricingRule,
   type Product,
   type Project,
   type ProposalTemplate,
@@ -60,14 +53,10 @@ import {
 type Props = {
   /** null while a brand-new quote is being written. */
   quote: Quote | null;
-  me: SessionUser;
   preferences: Preferences;
   products: Product[];
-  priceBooks: PriceBook[];
   accounts: Account[];
   projects: Project[];
-  pricingRules: PricingRule[];
-  approvalRules: ApprovalRule[];
   templates: ProposalTemplate[];
   onSaved: (quote: Quote) => void;
   onDeleted: () => void;
@@ -81,9 +70,8 @@ type Draft = {
   name: string;
   accountId: string | null;
   projectId: string;
-  priceBookId: string;
-  currency: string;
-  termMonths: number;
+  markupPercent: number;
+  overheadPercent: number;
   discountPercent: number;
   taxPercent: number;
   shipping: number;
@@ -105,9 +93,9 @@ function draftFrom(quote: Quote | null, preferences: Preferences): Draft {
       name: "",
       accountId: null,
       projectId: "",
-      priceBookId: preferences.defaultPriceBookId,
-      currency: preferences.defaultCurrency,
-      termMonths: preferences.defaultTermMonths,
+      // The company's standing numbers, which this estimate keeps from here on.
+      markupPercent: preferences.markupPercent,
+      overheadPercent: preferences.overheadPercent,
       discountPercent: 0,
       taxPercent: preferences.defaultTaxPercent,
       shipping: 0,
@@ -122,9 +110,8 @@ function draftFrom(quote: Quote | null, preferences: Preferences): Draft {
     name: quote.name,
     accountId: quote.customer.accountId,
     projectId: quote.projectId,
-    priceBookId: quote.priceBookId,
-    currency: quote.currency,
-    termMonths: quote.termMonths,
+    markupPercent: quote.markupPercent,
+    overheadPercent: quote.overheadPercent,
     discountPercent: quote.discountPercent,
     taxPercent: quote.taxPercent,
     shipping: quote.shipping,
@@ -139,9 +126,8 @@ function draftFrom(quote: Quote | null, preferences: Preferences): Draft {
       quantity: line.quantity,
       discountPercent: line.discountPercent,
       unitPriceOverride: line.unitPriceOverride,
-      wastePercentOverride: null,
+      wastePercentOverride: line.wastePercentOverride ?? null,
       selectedOptions: line.selectedOptions,
-      termMonths: line.termMonths,
       description: line.description,
       parentId: line.parentId,
       sortOrder: line.sortOrder,
@@ -153,17 +139,17 @@ function draftFrom(quote: Quote | null, preferences: Preferences): Draft {
  * Writing a quote.
  *
  * Everything on screen is priced **locally**, by the same engine the server
- * runs (`src/lib/pricing.ts`), so a discount typed into a box moves the total,
- * the margin and the approval list on the same keystroke rather than after a
+ * runs (`src/lib/pricing.ts`), so a discount typed into a box moves the total
+ * and the margin on the same keystroke rather than after a
  * round trip. The server prices it again on save and its answer replaces this
- * one — the local copy is for the rep's eyes, the stored copy is the truth.
+ * one — the local copy is for the estimator's eyes, the stored copy is the truth.
  *
- * A quote stops being editable the moment it leaves the rep's hands. That is
+ * A quote stops being editable the moment it is sent. That is
  * enforced by the server; here it just means the inputs go away, so nobody
  * types into a form that is going to refuse them.
  */
 export function QuoteEditor(props: Props) {
-  const { quote, me, preferences, products, priceBooks, accounts, projects, pricingRules, approvalRules } = props;
+  const { quote, preferences, products, accounts, projects } = props;
 
   // Only a quote template renders a quote: an invoice one would resolve every
   // token to a blank, and the server refuses it for that reason.
@@ -190,42 +176,29 @@ export function QuoteEditor(props: Props) {
   }, [quote?.id, quote?.updatedAt]);
 
   const editable = !quote || isEditableStatus(quote.status);
-  const currency = asCurrency(draft.currency);
+  const currency = DEFAULT_CURRENCY;
   const format = formatters(currency, preferences.locale);
 
   const byId = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
   const bySku = useMemo(() => new Map(products.map(product => [product.sku, product])), [products]);
 
   /** The live price, recomputed whenever anything it depends on changes. */
-  const priced = useMemo(() => {
-    const book =
-      priceBooks.find(entry => entry.id === draft.priceBookId) ??
-      priceBooks.find(entry => entry.isDefault && entry.active && entry.currency === currency) ??
-      null;
-
-    return priceQuote(
-      draft.lines,
-      {
-        currency,
-        termMonths: draft.termMonths,
-        discountPercent: draft.discountPercent,
-        taxPercent: draft.taxPercent,
-        shipping: draft.shipping,
-      },
-      { products: byId, priceBook: book, rules: pricingRules },
-    );
-  }, [draft, currency, priceBooks, byId, pricingRules]);
-
-  /** And what submitting it would ask for. */
-  const approvalsRequired = useMemo(() => {
-    const floorByLineId = new Map(
-      priced.lines.map(line => [line.id, byId.get(line.productId)?.floorDiscountPercent ?? 0]),
-    );
-    return evaluateApprovals(
-      { totals: priced.totals, lines: priced.lines, termMonths: draft.termMonths, floorByLineId },
-      approvalRules,
-    ).required;
-  }, [priced, byId, approvalRules, draft.termMonths]);
+  const priced = useMemo(
+    () =>
+      priceQuote(
+        draft.lines,
+        {
+          currency,
+          markupPercent: draft.markupPercent,
+          overheadPercent: draft.overheadPercent,
+          discountPercent: draft.discountPercent,
+          taxPercent: draft.taxPercent,
+          shipping: draft.shipping,
+        },
+        { products: byId },
+      ),
+    [draft, currency, byId],
+  );
 
   const patch = (changes: Partial<Draft>) => {
     setDraft(current => ({ ...current, ...changes }));
@@ -240,12 +213,11 @@ export function QuoteEditor(props: Props) {
     const line: QuoteLineInput = {
       id: localId("ln"),
       productId: product.id,
-      quantity: Math.max(1, product.minQuantity),
+      quantity: 1,
       discountPercent: 0,
       unitPriceOverride: null,
       wastePercentOverride: null,
       selectedOptions: defaultSelection(product),
-      termMonths: 0,
       description: "",
       parentId: null,
       sortOrder: draft.lines.length,
@@ -273,9 +245,8 @@ export function QuoteEditor(props: Props) {
     name: source.name.trim() || "Untitled estimate",
     accountId: source.accountId,
     projectId: source.projectId,
-    priceBookId: source.priceBookId,
-    currency: source.currency,
-    termMonths: source.termMonths,
+    markupPercent: source.markupPercent,
+    overheadPercent: source.overheadPercent,
     discountPercent: source.discountPercent,
     taxPercent: source.taxPercent,
     shipping: source.shipping,
@@ -309,30 +280,16 @@ export function QuoteEditor(props: Props) {
       if (result.warnings.length) props.onNotice(result.warnings);
     });
 
-  const submit = () =>
-    run("Submitting", async () => {
-      // Submitting prices what is *stored*, so an unsaved change would be
-      // approved in a form nobody has seen. Save first, always.
+  /**
+   * Saves, then marks the estimate sent. Saved first, always: what is sent is
+   * what is stored, and an unsaved change would go out in a form nobody has
+   * seen priced by the server.
+   */
+  const send = () =>
+    run("Sending", async () => {
       const saved = quote ? await api.updateQuote(quote.id, bodyOf(draft)) : await api.createQuote(bodyOf(draft));
       setDirty(false);
-
-      const result = await api.submitQuote(saved.quote.id);
-      props.onSaved(result.quote);
-
-      const lines: string[] = [];
-      if (result.quote.status === "approved") {
-        lines.push("Nothing on this estimate needed approval — it is ready to send.");
-      } else {
-        lines.push(
-          `Submitted. Waiting on ${[...new Set(result.required.flatMap(request => request.approverEmails))].join(", ")}.`,
-        );
-      }
-      if (result.unresolved.length) {
-        lines.push(
-          `No account here matches ${result.unresolved.join(", ")} — those approvals cannot be answered until they register.`,
-        );
-      }
-      props.onNotice(lines);
+      props.onSaved(await api.setQuoteStatus(saved.quote.id, "sent"));
     });
 
   const moveTo = (status: QuoteStatus) =>
@@ -447,14 +404,11 @@ export function QuoteEditor(props: Props) {
           )}
 
           {editable && (
-            <Button onClick={() => void submit()} disabled={Boolean(busy) || blocked || !draft.lines.length}>
-              {busy === "Submitting" ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
-              {approvalsRequired.length ? "Submit for approval" : "Submit"}
-            </Button>
-          )}
-
-          {quote?.status === "approved" && (
-            <Button onClick={() => void moveTo("sent")} disabled={Boolean(busy)}>
+            <Button
+              onClick={() => void send()}
+              disabled={Boolean(busy) || blocked || !draft.lines.length}
+              title="Save, and mark the estimate as sent to the client"
+            >
               {busy === "Sending" ? <Loader2 className="animate-spin" /> : <Send />} Mark as sent
             </Button>
           )}
@@ -479,11 +433,6 @@ export function QuoteEditor(props: Props) {
 
           {quote && (
             <Menu>
-              {transitions.includes("sent") && quote.status !== "approved" && (
-                <MenuItem onSelect={() => void moveTo("sent")} disabled={Boolean(busy)}>
-                  <Send /> Mark as sent
-                </MenuItem>
-              )}
               {transitions.includes("draft") && (
                 <MenuItem onSelect={() => void moveTo("draft")} disabled={Boolean(busy)}>
                   <Undo2 /> Reopen as draft
@@ -518,10 +467,6 @@ export function QuoteEditor(props: Props) {
 
       <Notice kind="error" lines={priced.issues} />
       <Notice kind="warning" lines={priced.warnings} />
-
-      {quote && quote.approvals.length > 0 && (
-        <ApprovalHistory quote={quote} me={me} onDecided={props.onSaved} onError={props.onError} />
-      )}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-4">
@@ -588,47 +533,26 @@ export function QuoteEditor(props: Props) {
                 </Select>
               </Field>
 
-              <Field label="Price book">
-                <Select
-                  value={draft.priceBookId || "default"}
-                  onValueChange={value => patch({ priceBookId: value === "default" ? "" : value })}
-                  disabled={!editable}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default for this currency</SelectItem>
-                    {priceBooks.map(book => (
-                      <SelectItem key={book.id} value={book.id}>
-                        {book.name} ({book.currency}){book.isDefault ? " · default" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field label="Currency">
-                <Select value={draft.currency} onValueChange={value => patch({ currency: value })} disabled={!editable}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CURRENCIES.map(code => (
-                      <SelectItem key={code} value={code}>
-                        {code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field label="Term (months)" hint="Recurring lines are priced across this.">
+              <Field label="Markup %" hint="On cost, for items with no list price of their own.">
                 <Input
                   type="number"
                   min={0}
-                  value={draft.termMonths}
-                  onChange={event => patch({ termMonths: Number(event.target.value) })}
+                  max={MAX_MARKUP_PERCENT}
+                  step="0.5"
+                  value={draft.markupPercent}
+                  onChange={event => patch({ markupPercent: Number(event.target.value) })}
+                  disabled={!editable}
+                />
+              </Field>
+
+              <Field label="Overhead %" hint="On the subtotal, after the estimate discount.">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  value={draft.overheadPercent}
+                  onChange={event => patch({ overheadPercent: Number(event.target.value) })}
                   disabled={!editable}
                 />
               </Field>
@@ -762,8 +686,7 @@ export function QuoteEditor(props: Props) {
             totals={priced.totals}
             format={format}
             showMargin={preferences.showMargin}
-            approvalsRequired={approvalsRequired}
-            termMonths={draft.termMonths}
+            overheadPercent={draft.overheadPercent}
           />
         </div>
       </div>
@@ -775,6 +698,7 @@ export function QuoteEditor(props: Props) {
           products={products}
           currency={currency}
           locale={preferences.locale}
+          markupPercent={draft.markupPercent}
           onPick={addProduct}
           onClose={() => setPicking(false)}
         />
@@ -786,7 +710,7 @@ export function QuoteEditor(props: Props) {
           line={configuringLine}
           currency={currency}
           locale={preferences.locale}
-          quoteTermMonths={draft.termMonths}
+          markupPercent={draft.markupPercent}
           onSave={line => {
             changeLine(line.id, line);
             setConfiguring(null);
@@ -831,143 +755,5 @@ export function QuoteEditor(props: Props) {
         </Dialog>
       )}
     </div>
-  );
-}
-
-/* ---------------------------- approval history ---------------------------- */
-
-/**
- * The approvals on a quote, and — if the person looking is the one being asked
- * — the two buttons that answer them.
- *
- * Every request addressed to you at the level in play is answered at once. An
- * approver is deciding about the quote, and asking them the same question four
- * times because it tripped four rules is how approvals stop being read.
- */
-function ApprovalHistory({
-  quote,
-  me,
-  onDecided,
-  onError,
-}: {
-  quote: Quote;
-  me: SessionUser;
-  onDecided: (quote: Quote) => void;
-  onError: (error: unknown) => void;
-}) {
-  const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const pending = quote.approvals.filter(request => request.status === "pending");
-  const lowest = pending.length ? Math.min(...pending.map(request => request.level)) : 0;
-
-  // What this person can actually answer right now. Approvals are collectable
-  // at the level in play; a rejection lands wherever it is addressed.
-  const canApprove = actionableFor(quote.approvals, me.email, "approved");
-  const canReject = actionableFor(quote.approvals, me.email, "rejected");
-
-  const decide = async (decision: "approved" | "rejected") => {
-    setBusy(true);
-    try {
-      const result = await api.decideQuote(quote.id, decision, comment);
-      setComment("");
-      onDecided(result.quote);
-    } catch (error) {
-      onError(error);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Section title="Approvals" description={lowest ? `Level ${lowest} is the one in play.` : undefined}>
-      <ul className="divide-y">
-        {quote.approvals.map(request => {
-          const progress = approvalProgress(request);
-          const quorum = request.approverEmails.length > 1;
-
-          return (
-            <li key={request.id} className="space-y-1.5 px-4 py-2.5 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  tone={request.status === "approved" ? "success" : request.status === "rejected" ? "danger" : "pending"}
-                >
-                  {request.status}
-                </Badge>
-                <span className="font-medium">{request.ruleName}</span>
-                <span className="text-xs text-muted-foreground">level {request.level}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{request.reason}</span>
-                {quorum && (
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {progress.approved} of {progress.needed} approved
-                    {progress.rejected > 0 ? ` · ${progress.rejected} of ${progress.toReject} rejected` : ""}
-                  </span>
-                )}
-              </div>
-
-              {/* Everyone asked, and what each has said so far. */}
-              <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                {request.approverEmails.map(email => {
-                  const answer = request.decisions.find(decision => decision.approverEmail === email);
-                  return (
-                    <li
-                      key={email}
-                      className={cn(
-                        "flex items-center gap-1",
-                        answer?.decision === "approved" && "text-emerald-700 dark:text-emerald-400",
-                        answer?.decision === "rejected" && "text-destructive",
-                        !answer && "text-muted-foreground",
-                      )}
-                      title={answer?.comment || undefined}
-                    >
-                      {answer?.decision === "approved" ? (
-                        <Check className="size-3" />
-                      ) : answer?.decision === "rejected" ? (
-                        <X className="size-3" />
-                      ) : (
-                        <span className="inline-block size-1.5 rounded-full bg-current opacity-40" />
-                      )}
-                      {email === me.email.toLowerCase() ? "you" : email}
-                    </li>
-                  );
-                })}
-              </ul>
-
-              {request.decisions
-                .filter(decision => decision.comment)
-                .map(decision => (
-                  <p key={decision.approverEmail} className="text-xs text-muted-foreground">
-                    {decision.approverEmail}: “{decision.comment}”
-                  </p>
-                ))}
-            </li>
-          );
-        })}
-      </ul>
-
-      {(canApprove.length > 0 || canReject.length > 0) && (
-        <div className="space-y-2 border-t bg-muted/30 p-4">
-          <p className="text-sm font-medium">
-            {canApprove.length > 0
-              ? `This quote is waiting on you — ${canApprove.length} request${canApprove.length === 1 ? "" : "s"} at level ${lowest}.`
-              : "You are an approver at a later level. You can object now; approving waits its turn."}
-          </p>
-          <Textarea
-            value={comment}
-            onChange={event => setComment(event.target.value)}
-            placeholder="A note for the person who asked (optional)"
-            rows={2}
-          />
-          <div className="flex gap-2">
-            <Button onClick={() => void decide("approved")} disabled={busy || canApprove.length === 0}>
-              {busy ? <Loader2 className="animate-spin" /> : <Check />} Approve
-            </Button>
-            <Button variant="outline" onClick={() => void decide("rejected")} disabled={busy}>
-              <X /> Reject
-            </Button>
-          </div>
-        </div>
-      )}
-    </Section>
   );
 }

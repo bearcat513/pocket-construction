@@ -8,12 +8,7 @@
  * already owned by someone else, or widen its share list by hand on an
  * ordinary update.
  *
- * Quotes are deliberately absent from the update list: they have a second
- * writer — an approver — and rules/approvals.js handles both cases for them.
- * Their *create* still comes through here, since a quote is created by its
- * owner like anything else.
- *
- * Only *request* hooks are registered, so the sharing and approver endpoints —
+ * Only *request* hooks are registered, so the sharing endpoints —
  * which save records directly through the app — are unaffected. Superusers are
  * left alone too: the dashboard, migrations and maintenance scripts are the
  * one place ownership is set by hand.
@@ -21,9 +16,6 @@
 const OWNED = [
   "accounts",
   "products",
-  "price_books",
-  "pricing_rules",
-  "approval_rules",
   "proposal_templates",
   "projects",
   "catalog_sources",
@@ -34,9 +26,6 @@ const OWNED = [
   "payments",
   "credits",
 ];
-
-/** Quotes are updated under rules/approvals.js instead. */
-const UPDATE_GUARDED = OWNED.filter(name => name !== "quotes");
 
 module.exports.register = () => {
   OWNED.forEach(collection => {
@@ -49,16 +38,14 @@ module.exports.register = () => {
       e.record.set("owner", e.auth.id);
 
       // Sharing is done afterwards, through /api/build/shares, which checks the
-      // address resolves to a real account. Approvers likewise.
-      const fields = e.record.collection().fields;
-      if (fields.getByName("sharedWith")) e.record.set("sharedWith", []);
-      if (fields.getByName("approvers")) e.record.set("approvers", []);
+      // address resolves to a real account.
+      if (e.record.collection().fields.getByName("sharedWith")) e.record.set("sharedWith", []);
 
       e.next();
     }, collection);
   });
 
-  UPDATE_GUARDED.forEach(collection => {
+  OWNED.forEach(collection => {
     onRecordUpdateRequest(e => {
       if (e.hasSuperuserAuth()) return e.next();
 

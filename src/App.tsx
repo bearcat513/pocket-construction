@@ -14,15 +14,12 @@ import {
   ScrollText,
   Search,
   Settings,
-  ShieldCheck,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { AccountsView } from "@/components/app/AccountsView";
 import { AttentionStrip } from "@/components/app/AttentionStrip";
 import { BrandLockup, BrandMark } from "@/components/app/Brand";
-import { ApprovalsQueue } from "@/components/app/ApprovalsQueue";
 import { AuthPanel } from "@/components/app/AuthPanel";
 import { CommandPalette } from "@/components/app/CommandPalette";
 import { Website } from "@/components/site/Website";
@@ -34,7 +31,6 @@ import { useFeedback } from "@/components/app/feedback";
 import { QuoteEditor } from "@/components/app/QuoteEditor";
 import { QuoteList } from "@/components/app/QuoteList";
 import { ReceivablesView } from "@/components/app/ReceivablesView";
-import { RulesView } from "@/components/app/RulesView";
 import { SettingsPanel, type SaveState } from "@/components/app/SettingsPanel";
 import { ShareDialog } from "@/components/app/ShareDialog";
 import { TemplatesView } from "@/components/app/TemplatesView";
@@ -43,15 +39,11 @@ import { DEFAULT_PREFERENCES, normalizePreferences, type Preferences } from "@/l
 import { HOME, parseRoute, routePath, sameRoute, type Route, type View } from "@/lib/route";
 import type {
   Account,
-  ApprovalRule,
   CatalogSource,
-  PriceBook,
-  PricingRule,
   Product,
   Project,
   ProposalTemplate,
   Quote,
-  QuoteSummary,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import "./index.css";
@@ -65,10 +57,8 @@ const PREFERENCE_SAVE_DELAY_MS = 500;
 const NAV: { id: View; label: string; Icon: typeof LayoutList }[] = [
   { id: "projects", label: "Projects", Icon: HardHat },
   { id: "quotes", label: "Estimates", Icon: ScrollText },
-  { id: "approvals", label: "Approvals", Icon: ShieldCheck },
   { id: "receivables", label: "Receivables", Icon: Receipt },
   { id: "catalog", label: "Materials", Icon: Package },
-  { id: "rules", label: "Rules", Icon: LayoutList },
   { id: "customers", label: "Clients", Icon: Building2 },
   { id: "templates", label: "Templates", Icon: FileText },
 ];
@@ -120,11 +110,7 @@ export function App() {
 
   /* Everything this account can see. */
   const [loaded, setLoaded] = useState(false);
-  const [awaiting, setAwaiting] = useState<QuoteSummary[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [priceBooks, setPriceBooks] = useState<PriceBook[]>([]);
-  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
-  const [approvalRules, setApprovalRules] = useState<ApprovalRule[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [catalogSources, setCatalogSources] = useState<CatalogSource[]>([]);
@@ -224,33 +210,15 @@ export function App() {
   /* ------------------------------- loading ------------------------------- */
 
   const refresh = useCallback(async () => {
-    const [
-      nextAwaiting,
-      nextProducts,
-      nextBooks,
-      nextPricing,
-      nextApproval,
-      nextAccounts,
-      nextTemplates,
-      nextProjects,
-      nextSources,
-    ] = await Promise.all([
-      api.quotesAwaitingMe(),
+    const [nextProducts, nextAccounts, nextTemplates, nextProjects, nextSources] = await Promise.all([
       api.listProducts(),
-      api.listPriceBooks(),
-      api.listPricingRules(),
-      api.listApprovalRules(),
       api.listAccounts(),
       api.listProposalTemplates(),
       api.listProjects(),
       api.listCatalogSources(),
     ]);
 
-    setAwaiting(nextAwaiting);
     setProducts(nextProducts);
-    setPriceBooks(nextBooks);
-    setPricingRules(nextPricing);
-    setApprovalRules(nextApproval);
     setAccounts(nextAccounts);
     setTemplates(nextTemplates);
     setProjects(nextProjects);
@@ -474,7 +442,6 @@ export function App() {
   const view = route.view === "website" && !me.siteEditor ? "projects" : route.view;
   const navCollapsed = preferences.navCollapsed;
   const screens = [...NAV, ...(me.siteEditor ? [WEBSITE_NAV] : [])];
-  const badgeFor = (id: View) => (id === "approvals" ? awaiting.length : 0);
 
   return (
     <div className="slab min-h-screen text-foreground">
@@ -523,7 +490,6 @@ export function App() {
           <nav className="flex flex-col gap-1 px-2 pb-2">
             {screens.map(({ id, label, Icon }) => {
               const active = view === id;
-              const badge = badgeFor(id);
 
               return (
                 <a
@@ -559,17 +525,6 @@ export function App() {
                     )}
                   />
                   {!navCollapsed && <span>{label}</span>}
-
-                  {badge > 0 &&
-                    (navCollapsed ? (
-                      // Collapsed, the count has nowhere to sit beside the
-                      // label, so it becomes a corner dot with the number.
-                      <span className="bg-alert motion-safe:animate-throb absolute top-1 right-1 flex size-4 items-center justify-center rounded-full text-[10px] font-medium text-white">
-                        {badge > 9 ? "9+" : badge}
-                      </span>
-                    ) : (
-                      <Badge tone="pending">{badge}</Badge>
-                    ))}
                 </a>
               );
             })}
@@ -654,14 +609,10 @@ export function App() {
               ) : (
                 <QuoteEditor
                   quote={openQuote}
-                  me={me}
                   preferences={preferences}
                   products={products}
-                  priceBooks={priceBooks}
                   accounts={accounts}
                   projects={projects}
-                  pricingRules={pricingRules}
-                  approvalRules={approvalRules}
                   templates={templates}
                   onSaved={onQuoteSaved}
                   onDeleted={() => {
@@ -682,8 +633,6 @@ export function App() {
                 onNew={() => void navigate({ view: "quotes", id: "new" })}
                 onError={fail}
               />
-            ) : view === "approvals" ? (
-              <ApprovalsQueue quotes={awaiting} preferences={preferences} onOpen={openQuoteById} />
             ) : view === "receivables" ? (
               <ReceivablesView
                 accounts={accounts}
@@ -697,11 +646,7 @@ export function App() {
             ) : view === "projects" ? (
               <>
                 {!route.id && (
-                  <AttentionStrip
-                    awaiting={awaiting.length}
-                    preferences={preferences}
-                    linkTo={linkTo}
-                  />
+                  <AttentionStrip preferences={preferences} linkTo={linkTo} />
                 )}
                 <ProjectsView
                   projects={projects}
@@ -720,7 +665,6 @@ export function App() {
             ) : view === "catalog" ? (
               <CatalogView
                 products={products}
-                priceBooks={priceBooks}
                 catalogSources={catalogSources}
                 preferences={preferences}
                 myId={me.id}
@@ -729,19 +673,9 @@ export function App() {
                 onError={fail}
                 onNotice={notice}
               />
-            ) : view === "rules" ? (
-              <RulesView
-                pricingRules={pricingRules}
-                approvalRules={approvalRules}
-                products={products}
-                directory={directory}
-                onChanged={refresh}
-                onError={fail}
-              />
             ) : view === "customers" ? (
               <AccountsView
                 accounts={accounts}
-                priceBooks={priceBooks}
                 preferences={preferences}
                 openId={route.id ?? null}
                 onOpen={id => void navigate(id ? { view: "customers", id } : { view: "customers" })}
@@ -770,7 +704,6 @@ export function App() {
                 onTab={tab => void navigate({ view: "settings", id: tab }, { replace: true })}
                 preferences={preferences}
                 saveState={preferenceSave}
-                priceBooks={priceBooks}
                 templates={templates}
                 meta={meta}
                 hasCatalogue={products.length > 0}
@@ -820,9 +753,6 @@ export function App() {
         >
           <MoreHorizontal className="size-5" />
           More
-          {awaiting.length > 0 && (
-            <span className="bg-alert absolute top-1 right-[calc(50%-1.1rem)] size-2 rounded-full" aria-hidden="true" />
-          )}
         </button>
       </nav>
 
@@ -842,7 +772,6 @@ export function App() {
                 >
                   <Icon className="size-4 text-muted-foreground" />
                   <span className="flex-1">{label}</span>
-                  {badgeFor(id) > 0 && <Badge tone="pending">{badgeFor(id)}</Badge>}
                 </a>
               ),
             )}

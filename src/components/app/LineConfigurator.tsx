@@ -6,7 +6,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Field, Notice, formatters } from "./common";
 import { toggleOption, validateConfiguration } from "@/lib/configurator";
-import { tierFor } from "@/lib/pricing";
+import { sellPrice, tierFor } from "@/lib/pricing";
 import { round } from "@/lib/money";
 import type { CurrencyCode, Product, QuoteLineInput } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -16,40 +16,36 @@ type Props = {
   line: QuoteLineInput;
   currency: CurrencyCode;
   locale: string;
-  /** The quote's term, used when the line does not name its own. */
-  quoteTermMonths: number;
+  /** The quote's markup, which prices an item that has no list price. */
+  markupPercent: number;
   onSave: (line: QuoteLineInput) => void;
   onClose: () => void;
 };
 
 /**
- * Configuring one line: which options, how many, for how long.
+ * Configuring one line: which options, and how many.
  *
  * Everything recomputes as you click, because the only question worth
  * answering here is "what does that do to the price" — and the answer runs the
  * same `validateConfiguration` the server runs on save, so the dialog can
  * never say a configuration is fine that the server will then refuse.
  */
-export function LineConfigurator({ product, line, currency, locale, quoteTermMonths, onSave, onClose }: Props) {
+export function LineConfigurator({ product, line, currency, locale, markupPercent, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<QuoteLineInput>(line);
   const format = formatters(currency, locale);
 
-  const termMonths = draft.termMonths || quoteTermMonths;
+  /** Its list price, or its cost plus the markup — the engine's first step. */
+  const basePrice = sellPrice(product, markupPercent, currency).price;
 
   const result = useMemo(
-    () =>
-      validateConfiguration(
-        product,
-        { selectedOptions: draft.selectedOptions, quantity: draft.quantity, termMonths },
-        currency,
-      ),
-    [product, draft.selectedOptions, draft.quantity, termMonths, currency],
+    () => validateConfiguration(product, { selectedOptions: draft.selectedOptions, quantity: draft.quantity }, currency),
+    [product, draft.selectedOptions, draft.quantity, currency],
   );
 
   // The unit price this configuration lands on, before discounts — the same
   // first three steps the pricing engine takes.
   const tier = tierFor(product.volumeTiers, draft.quantity);
-  const optioned = round(product.listPrice * result.unitFactor + result.unitDelta, currency);
+  const optioned = round(basePrice * result.unitFactor + result.unitDelta, currency);
   const tiered =
     tier === null
       ? optioned
@@ -62,12 +58,12 @@ export function LineConfigurator({ product, line, currency, locale, quoteTermMon
   const set = (patch: Partial<QuoteLineInput>) => setDraft(current => ({ ...current, ...patch }));
 
   const step = (delta: number) =>
-    set({ quantity: Math.max(product.minQuantity || 1, draft.quantity + delta) });
+    set({ quantity: Math.max(1, draft.quantity + delta) });
 
   return (
     <Sheet
       title={`Configure ${product.name}`}
-      description={`${product.sku} · ${format.money(product.listPrice, product.currency)} per ${product.unitOfMeasure}`}
+      description={`${product.sku} · ${format.money(basePrice)} per ${product.unitOfMeasure}`}
       onClose={onClose}
       footer={
         <>
@@ -89,7 +85,7 @@ export function LineConfigurator({ product, line, currency, locale, quoteTermMon
               </Button>
               <Input
                 type="number"
-                min={product.minQuantity || 0}
+                min={0}
                 value={draft.quantity}
                 onChange={event => set({ quantity: Number(event.target.value) })}
                 className="text-center"
@@ -99,18 +95,6 @@ export function LineConfigurator({ product, line, currency, locale, quoteTermMon
               </Button>
             </div>
           </Field>
-
-          {product.chargeType === "recurring" && (
-            <Field label="Term (months)" hint={draft.termMonths ? undefined : `Using the quote's ${quoteTermMonths}`}>
-              <Input
-                type="number"
-                min={0}
-                value={draft.termMonths || ""}
-                placeholder={String(quoteTermMonths)}
-                onChange={event => set({ termMonths: Number(event.target.value) })}
-              />
-            </Field>
-          )}
 
           <Field label="Discount %">
             <Input
@@ -148,7 +132,7 @@ export function LineConfigurator({ product, line, currency, locale, quoteTermMon
                   // What this one option is worth per unit, at the current
                   // list price — the number the buyer is actually weighing.
                   const delta = round(
-                    product.listPrice * ((option.priceFactor ?? 1) - 1) + option.priceDelta,
+                    basePrice * ((option.priceFactor ?? 1) - 1) + option.priceDelta,
                     currency,
                   );
 

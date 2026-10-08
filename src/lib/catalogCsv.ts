@@ -29,18 +29,10 @@
  */
 import { parseCatalogFile, type ParseResult } from "./catalogFile";
 import { parseBoolean, parseNumber, parseTable } from "./csv";
-import {
-  BILLING_PERIODS,
-  CHARGE_TYPES,
-  COST_TYPES,
-  CSI_DIVISION_NAMES,
-  CURRENCIES,
-  UNITS_OF_MEASURE,
-  UNIT_SET,
-} from "./types";
+import { COST_TYPES, CSI_DIVISION_NAMES, UNITS_OF_MEASURE, UNIT_SET } from "./types";
 import { readProduct, type ProductInput } from "./validate";
 
-type Kind = "text" | "number" | "integer" | "boolean" | "unit" | "enum" | "division" | "attributes";
+type Kind = "text" | "number" | "integer" | "boolean" | "unit" | "enum" | "division";
 
 export type CatalogCsvColumn = {
   /** The header, exactly as the template and the export write it. */
@@ -79,16 +71,10 @@ export const CATALOG_CSV_COLUMNS: CatalogCsvColumn[] = [
   { column: "description", kind: "text", required: false, note: "Longer text, shown under the name on a proposal." },
   { column: "family", kind: "text", required: false, note: "The group it is filed under: Framing, Concrete, Labor…", aliases: ["category", "group"] },
   { column: "costType", kind: "enum", required: false, values: COST_TYPES, note: "How a job cost report adds it up. Blank is material." },
-  { column: "chargeType", kind: "enum", required: false, values: CHARGE_TYPES, note: "When it is billed. `recurring` is rented by the period. Blank is one-time." },
-  { column: "billingPeriod", kind: "enum", required: false, values: BILLING_PERIODS, note: "Only for recurring items. Blank is monthly." },
   { column: "unitOfMeasure", kind: "unit", required: true, values: UNITS_OF_MEASURE, note: "What one of it is. A code from the closed list — SF, not sq ft.", aliases: ["uom", "unit", "units"] },
-  { column: "currency", kind: "enum", required: false, values: CURRENCIES, note: "Blank is USD." },
-  { column: "listPrice", kind: "number", required: true, note: "Your sell price per unit. Write 0 if it really is free; blank is refused.", aliases: ["price", "sell price", "unit price"] },
+  { column: "listPrice", kind: "number", required: true, note: "Your sell price per unit. 0 prices it at cost plus the estimate's markup; blank is refused.", aliases: ["price", "sell price", "unit price"] },
   { column: "cost", kind: "number", required: false, note: "What one unit costs you. Blank is 0.", aliases: ["unit cost"] },
   { column: "active", kind: "boolean", required: false, note: "yes / no. Blank is yes." },
-  { column: "minQuantity", kind: "integer", required: false, note: "The least a line may order. Blank is 1.", aliases: ["min qty"] },
-  { column: "maxQuantity", kind: "integer", required: false, note: "The most a line may order. Blank is no limit.", aliases: ["max qty"] },
-  { column: "floorDiscountPercent", kind: "number", required: false, note: "The deepest discount allowed before approval, in percent.", aliases: ["floor discount"] },
   { column: "wasteFactorPercent", kind: "number", required: false, note: "Bought on top of the take-off, in percent. Drywall 15, studs 8, windows 0.", aliases: ["waste", "waste percent", "waste factor"] },
   { column: "purchaseMultiple", kind: "number", required: false, note: "The lot it is sold in: 0.25 for concrete by the quarter yard. Blank sells any quantity.", aliases: ["lot", "lot size", "multiple"] },
   { column: "division", kind: "division", required: false, note: "CSI MasterFormat division, two digits: 03 concrete, 06 wood, 09 finishes.", aliases: ["csi division", "csi"] },
@@ -105,7 +91,6 @@ export const CATALOG_CSV_COLUMNS: CatalogCsvColumn[] = [
   { column: "coverageUnit", kind: "unit", required: false, values: UNITS_OF_MEASURE, note: "The unit coverage is measured in. Needed when coverage is set." },
   { column: "leadTimeDays", kind: "integer", required: false, note: "Days from order to site.", aliases: ["lead time", "lead days"] },
   { column: "submittalRequired", kind: "boolean", required: false, note: "yes if the architect has to approve it first.", aliases: ["submittal"] },
-  { column: "attributes", kind: "attributes", required: false, note: "Spec-table rows for a proposal: Key=Value; Key=Value." },
 ];
 
 /**
@@ -114,6 +99,12 @@ export const CATALOG_CSV_COLUMNS: CatalogCsvColumn[] = [
  * anything in it, the import says what it could not carry.
  */
 const EXPORT_ONLY = ["marginPercent", "optionGroups", "options", "configurationRules", "bundleComponents", "volumeTiers"];
+
+/**
+ * Columns an older export wrote for fields the catalogue no longer has. Known,
+ * so re-importing an old spreadsheet does not list them as strangers.
+ */
+const RETIRED = ["chargeType", "billingPeriod", "currency", "minQuantity", "maxQuantity", "floorDiscountPercent", "attributes"];
 const STRUCTURED = new Set(["optionGroups", "options", "configurationRules", "bundleComponents", "volumeTiers"]);
 
 const normalise = (header: string): string => header.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -123,7 +114,7 @@ for (const spec of CATALOG_CSV_COLUMNS) {
   BY_HEADER.set(normalise(spec.column), spec);
   for (const alias of spec.aliases ?? []) BY_HEADER.set(normalise(alias), spec);
 }
-const IGNORED = new Map(EXPORT_ONLY.map(column => [normalise(column), column]));
+const IGNORED = new Map([...EXPORT_ONLY, ...RETIRED].map(column => [normalise(column), column]));
 
 /* --------------------------------- writing -------------------------------- */
 
@@ -138,16 +129,10 @@ export function catalogCsvRow(product: ProductInput): Record<string, string | nu
     description: product.description,
     family: product.family,
     costType: product.costType,
-    chargeType: product.chargeType,
-    billingPeriod: product.chargeType === "recurring" ? product.billingPeriod : "",
     unitOfMeasure: product.unitOfMeasure,
-    currency: product.currency,
     listPrice: product.listPrice,
     cost: product.cost,
     active: product.active,
-    minQuantity: product.minQuantity,
-    maxQuantity: blankZero(product.maxQuantity),
-    floorDiscountPercent: product.floorDiscountPercent,
     wasteFactorPercent: product.wasteFactorPercent,
     purchaseMultiple: blankZero(product.purchaseMultiple),
     division: material.division,
@@ -164,9 +149,6 @@ export function catalogCsvRow(product: ProductInput): Record<string, string | nu
     coverageUnit: material.coverageUnit,
     leadTimeDays: blankZero(material.leadTimeDays),
     submittalRequired: material.submittalRequired,
-    attributes: Object.entries(product.attributes)
-      .map(([key, value]) => `${key}=${value}`)
-      .join("; "),
   };
 }
 
@@ -211,15 +193,6 @@ function readCell(spec: CatalogCsvColumn, raw: string): Cell {
       const code = raw.replace(/\D/g, "").slice(0, 2).padStart(2, "0");
       if (!CSI_DIVISION_NAMES[code]) return { ok: false, error: `"${raw}" is not a CSI division` };
       return { ok: true, value: code };
-    }
-    case "attributes": {
-      const attributes: Record<string, string> = {};
-      for (const pair of raw.split(";")) {
-        const at = pair.indexOf("=");
-        const key = (at < 0 ? pair : pair.slice(0, at)).trim();
-        if (key) attributes[key] = at < 0 ? "" : pair.slice(at + 1).trim();
-      }
-      return { ok: true, value: attributes };
     }
   }
 }

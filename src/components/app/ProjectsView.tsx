@@ -23,6 +23,7 @@ import {
 import type { ProjectInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
 import { useFeedback } from "./feedback";
+import { DEFAULT_CURRENCY } from "@/lib/money";
 
 type Props = {
   projects: Project[];
@@ -71,7 +72,7 @@ export function ProjectsView(props: Props) {
   const [status, setStatus] = useState<ProjectStatus | "">("");
   const [sort, setSort] = useState<ProjectSort>("status");
 
-  const format = formatters(preferences.defaultCurrency, preferences.locale);
+  const format = formatters(DEFAULT_CURRENCY, preferences.locale);
 
   const visible = useMemo(
     () => sortProjects(filterProjects(projects, { search, status }), sort),

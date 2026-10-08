@@ -25,16 +25,7 @@
  */
 import { buildCatalogFile, type CatalogFile } from "./catalogFile";
 import type { Preferences } from "./preferences";
-import type {
-  Account,
-  ApprovalRule,
-  Invoice,
-  PriceBook,
-  PricingRule,
-  Product,
-  ProposalTemplate,
-  Quote,
-} from "./types";
+import type { Account, Invoice, Product, ProposalTemplate, Quote } from "./types";
 
 export const WORKSPACE_FILE_KIND = "construction/workspace";
 export const WORKSPACE_FILE_VERSION = 1;
@@ -52,7 +43,7 @@ export type WorkspaceAccountEntry = Omit<Account, "id" | "ownerId" | "createdAt"
  * was offered, and re-deriving it from a catalogue that has since changed
  * would be a different document wearing the same number.
  */
-export type WorkspaceQuoteEntry = Omit<Quote, "ownerId" | "sharedWith" | "approverIds"> & Shared;
+export type WorkspaceQuoteEntry = Omit<Quote, "ownerId" | "sharedWith"> & Shared;
 
 /**
  * An invoice as exported: the document, its lines and its whole ledger.
@@ -83,9 +74,6 @@ export type WorkspaceInput = {
   ownerId: string;
   email: string;
   products: Product[];
-  priceBooks: PriceBook[];
-  pricingRules: PricingRule[];
-  approvalRules: ApprovalRule[];
   accounts: Account[];
   templates: ProposalTemplate[];
   quotes: Quote[];
@@ -106,9 +94,6 @@ export function buildWorkspaceFile(input: WorkspaceInput): WorkspaceFile {
     catalog: buildCatalogFile({
       name: `${input.email}'s catalogue`,
       products: input.products,
-      priceBooks: input.priceBooks,
-      pricingRules: input.pricingRules,
-      approvalRules: input.approvalRules,
     }),
     accounts: input.accounts.map(({ id, ownerId, createdAt, updatedAt, ...rest }) => rest),
     proposalTemplates: input.templates.map(template => ({
@@ -119,7 +104,7 @@ export function buildWorkspaceFile(input: WorkspaceInput): WorkspaceFile {
       ...shared(template),
     })),
     quotes: input.quotes.map(quote => {
-      const { ownerId, sharedWith, approverIds, ...rest } = quote;
+      const { ownerId, sharedWith, ...rest } = quote;
       return { ...rest, ...shared(quote) };
     }),
     invoices: input.invoices.map(invoice => {

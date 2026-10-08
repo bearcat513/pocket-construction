@@ -10,8 +10,6 @@ import type { Product } from "./types";
 const product = (overrides: Partial<Product> = {}): Product =>
   ({
     name: "Platform",
-    minQuantity: 1,
-    maxQuantity: 0,
     optionGroups: [
       {
         id: "g1",
@@ -42,8 +40,8 @@ const product = (overrides: Partial<Product> = {}): Product =>
     ...overrides,
   }) as Product;
 
-const check = (p: Product, selectedOptions: string[], quantity = 10, termMonths = 12) =>
-  validateConfiguration(p, { selectedOptions, quantity, termMonths }, "USD");
+const check = (p: Product, selectedOptions: string[], quantity = 10) =>
+  validateConfiguration(p, { selectedOptions, quantity }, "USD");
 
 describe("defaults", () => {
   test("a required single-select starts on its default, or its first option", () => {
@@ -82,11 +80,8 @@ describe("cardinality", () => {
     expect(check(product(), ["standard", "sso", "audit", "hsm"]).errors[0]).toContain("at most 2");
   });
 
-  test("quantity bounds come from the product", () => {
-    const bounded = product({ minQuantity: 5, maxQuantity: 50 });
-    expect(check(bounded, ["standard"], 2).errors[0]).toContain("minimum of 5");
-    expect(check(bounded, ["standard"], 80).errors[0]).toContain("maximum of 50");
-    expect(check(bounded, ["standard"], 0).errors[0]).toContain("greater than zero");
+  test("a quantity must be positive", () => {
+    expect(check(product(), ["standard"], 0).errors[0]).toContain("greater than zero");
   });
 });
 

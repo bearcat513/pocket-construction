@@ -25,13 +25,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * A quote's status, coloured by what it means for the person reading it:
- * amber is waiting on somebody, green has landed, red came back.
+ * blue is with the client, green has landed, red came back.
  */
 const STATUS_TONE: Record<QuoteStatus, "neutral" | "info" | "pending" | "success" | "danger"> = {
   draft: "neutral",
-  in_review: "pending",
-  approved: "info",
-  rejected: "danger",
   sent: "info",
   accepted: "success",
   declined: "danger",
@@ -40,9 +37,6 @@ const STATUS_TONE: Record<QuoteStatus, "neutral" | "info" | "pending" | "success
 
 const STATUS_LABEL: Record<QuoteStatus, string> = {
   draft: "Draft",
-  in_review: "In review",
-  approved: "Approved",
-  rejected: "Rejected",
   sent: "Sent",
   accepted: "Accepted",
   declined: "Declined",

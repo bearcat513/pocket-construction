@@ -11,12 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Field, Notice } from "./common";
 import { localId, type ProductInput } from "@/lib/validate";
 import {
-  BILLING_PERIODS,
-  CHARGE_TYPES,
   COST_TYPE_LABELS,
   COST_TYPES,
   CSI_DIVISIONS,
-  CURRENCIES,
   EMPTY_MATERIAL,
   PRODUCT_RULE_KINDS,
   TIER_KINDS,
@@ -46,16 +43,10 @@ const BLANK: ProductInput = {
   name: "",
   description: "",
   family: "",
-  chargeType: "recurring",
-  billingPeriod: "monthly",
   unitOfMeasure: "EA",
   listPrice: 0,
   cost: 0,
-  currency: "USD",
   active: true,
-  minQuantity: 1,
-  maxQuantity: 0,
-  floorDiscountPercent: 0,
   costType: "material",
   wasteFactorPercent: 0,
   purchaseMultiple: 0,
@@ -64,12 +55,11 @@ const BLANK: ProductInput = {
   rules: [],
   components: [],
   volumeTiers: [],
-  attributes: {},
 };
 
 const toInput = (product: Product | null): ProductInput => {
   if (!product) return structuredClone(BLANK);
-  const { id, ownerId, sharedWith, createdAt, updatedAt, ...rest } = product;
+  const { id, ownerId, createdAt, updatedAt, ...rest } = product;
   return structuredClone(rest);
 };
 
@@ -205,7 +195,7 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
     <Sheet
       title={product ? `Edit ${product.name}` : "New catalogue item"}
       description={
-        product ? product.sku : "A SKU identifies this item everywhere — in assemblies, price books and files."
+        product ? product.sku : "A SKU identifies this item everywhere — in assemblies, feeds and files."
       }
       onClose={() => void close()}
       error={error}
@@ -248,7 +238,7 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
                   className="font-mono"
                 />
               </Field>
-              <Field label="Family" hint="Pricing rules can target a whole family.">
+              <Field label="Family" hint="What it is filed under: Framing, Roofing, Labor.">
                 <Combobox
                   value={draft.family}
                   onChange={family => patch({ family })}
@@ -297,59 +287,7 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
             </Field>
 
             <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
-              <Field label="Charge type">
-                <Select value={draft.chargeType} onValueChange={value => patch({ chargeType: value as ProductInput["chargeType"] })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CHARGE_TYPES.map(type => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              {draft.chargeType === "recurring" && (
-                <Field label="Billed">
-                  <Select
-                    value={draft.billingPeriod}
-                    onValueChange={value => patch({ billingPeriod: value as ProductInput["billingPeriod"] })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {BILLING_PERIODS.map(period => (
-                        <SelectItem key={period} value={period}>
-                          {period}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
-
-              <Field label="Currency">
-                <Select value={draft.currency} onValueChange={value => patch({ currency: value as ProductInput["currency"] })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CURRENCIES.map(code => (
-                      <SelectItem key={code} value={code}>
-                        {code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-
-            <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
-              <Field label="List price">
+              <Field label="List price" hint="Per unit. 0 sells it at cost plus your markup.">
                 <Input
                   type="number"
                   min={0}
@@ -365,34 +303,6 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
                   step="0.01"
                   value={draft.cost}
                   onChange={event => patch({ cost: Number(event.target.value) })}
-                />
-              </Field>
-              <Field label="Discount ceiling %" hint="Past this, a line needs approval.">
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={draft.floorDiscountPercent}
-                  onChange={event => patch({ floorDiscountPercent: Number(event.target.value) })}
-                />
-              </Field>
-            </div>
-
-            <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
-              <Field label="Minimum quantity">
-                <Input
-                  type="number"
-                  min={0}
-                  value={draft.minQuantity}
-                  onChange={event => patch({ minQuantity: Number(event.target.value) })}
-                />
-              </Field>
-              <Field label="Maximum quantity" hint="0 is no limit.">
-                <Input
-                  type="number"
-                  min={0}
-                  value={draft.maxQuantity}
-                  onChange={event => patch({ maxQuantity: Number(event.target.value) })}
                 />
               </Field>
               <Field label="Active" hint="Inactive items stay on existing estimates.">
@@ -792,7 +702,7 @@ export function ProductEditor({ product, products, onSave, onClose }: Props) {
                 />
 
                 {rule.kind === "validate" ? (
-                  <Field label="Expression" hint="Variables: quantity, termMonths, selectedCount, option.<key>">
+                  <Field label="Expression" hint="Variables: quantity, selectedCount, option.<key>">
                     <Input
                       value={rule.expression ?? ""}
                       onChange={event =>

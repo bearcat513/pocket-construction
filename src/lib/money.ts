@@ -45,7 +45,7 @@ const MINOR_UNITS: Record<CurrencyCode, number> = {
   BRL: 2,
 };
 
-/** The currency a price book falls back to when none was chosen. */
+/** The one currency the app works in. */
 export const DEFAULT_CURRENCY: CurrencyCode = "USD";
 
 export const isCurrency = (value: unknown): value is CurrencyCode => CURRENCY_SET.has(String(value));

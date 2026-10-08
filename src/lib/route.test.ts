@@ -14,7 +14,7 @@ describe("routes", () => {
       { view: "quotes" as const, id: "new" },
       { view: "receivables" as const, id: "inv_9" },
       { view: "settings" as const, id: "api" },
-      { view: "rules" as const },
+      { view: "catalog" as const },
     ]) {
       expect(parseRoute(routePath(route))).toEqual(route);
     }
@@ -23,7 +23,12 @@ describe("routes", () => {
   test("an unknown path is home, and an id where none belongs is dropped", () => {
     expect(parseRoute("/")).toEqual(HOME);
     expect(parseRoute("/nonsense/1")).toEqual(HOME);
-    expect(parseRoute("/rules/abc")).toEqual({ view: "rules" });
+    expect(parseRoute("/materials/abc")).toEqual({ view: "catalog" });
+  });
+
+  test("a retired screen's bookmark lands where its job went", () => {
+    expect(parseRoute("/rules")).toEqual({ view: "settings", id: "documents" });
+    expect(parseRoute("/approvals")).toEqual({ view: "quotes" });
   });
 
   test("an id survives characters a URL has to escape", () => {
@@ -31,7 +36,7 @@ describe("routes", () => {
   });
 
   test("sameRoute treats a missing id as none", () => {
-    expect(sameRoute({ view: "rules" }, { view: "rules", id: "" })).toBe(true);
+    expect(sameRoute({ view: "catalog" }, { view: "catalog", id: "" })).toBe(true);
     expect(sameRoute({ view: "quotes", id: "1" }, { view: "quotes" })).toBe(false);
   });
 });

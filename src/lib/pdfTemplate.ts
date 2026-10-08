@@ -46,7 +46,7 @@
  * a pixel.
  */
 import { decodeImage, imageBox, type EmbeddableImage } from "./image";
-import { formatMoney, formatPercent } from "./money";
+import { formatMoney, formatPercent, round } from "./money";
 import { DEFAULT_MARGINS, PdfDocument, type Margins, type PageSize, type TableCell, type TableColumn } from "./pdf";
 import { measureText, type FontFamily } from "./pdfFonts";
 import { fillTokens } from "./document";
@@ -116,8 +116,8 @@ export type BlockAlign = "left" | "center" | "right";
  * A column of the line-item table, named by the line token it shows.
  *
  * The two lists overlap where the two records do — a quantity is a quantity —
- * and diverge where they must: a quote line has a term and a discount off
- * list, an invoice line has a tax rate. A column naming a field the other
+ * and diverge where they must: a quote line has a discount off list, an
+ * invoice line has a tax rate. A column naming a field the other
  * kind does not have is dropped when the template is read, which is what
  * keeps a template that changed kind from printing empty columns.
  */
@@ -132,8 +132,6 @@ export type QuoteLineField =
   | "listPrice"
   | "unitPrice"
   | "discountPercent"
-  | "term"
-  | "billing"
   | "total";
 
 export type InvoiceLineField =
@@ -160,8 +158,6 @@ export const LINE_ITEM_FIELDS: { field: QuoteLineField; label: string }[] = [
   { field: "listPrice", label: "List price" },
   { field: "unitPrice", label: "Unit price" },
   { field: "discountPercent", label: "Discount" },
-  { field: "term", label: "Term" },
-  { field: "billing", label: "Billing" },
   { field: "total", label: "Total" },
 ];
 
@@ -198,16 +194,12 @@ export type QuoteTotalsField =
   | "lineDiscountAmount"
   | "subtotal"
   | "quoteDiscountAmount"
-  | "quoteAdjustment"
+  | "overheadAmount"
   | "totalDiscount"
   | "netTotal"
   | "shipping"
   | "taxAmount"
   | "grandTotal"
-  | "oneTimeTotal"
-  | "monthlyRecurringTotal"
-  | "annualRecurringTotal"
-  | "totalContractValue"
   | "effectiveDiscountPercent";
 
 /**
@@ -232,17 +224,13 @@ export const TOTALS_FIELDS: { field: QuoteTotalsField; label: string }[] = [
   { field: "lineDiscountAmount", label: "Line discounts" },
   { field: "subtotal", label: "Subtotal" },
   { field: "quoteDiscountAmount", label: "Quote discount" },
-  { field: "quoteAdjustment", label: "Adjustments" },
+  { field: "overheadAmount", label: "Overhead" },
   { field: "totalDiscount", label: "Total discount" },
   { field: "effectiveDiscountPercent", label: "Discount off list" },
   { field: "shipping", label: "Shipping" },
   { field: "taxAmount", label: "Tax" },
   { field: "netTotal", label: "Net total" },
   { field: "grandTotal", label: "Total" },
-  { field: "oneTimeTotal", label: "One-time charges" },
-  { field: "monthlyRecurringTotal", label: "Monthly recurring" },
-  { field: "annualRecurringTotal", label: "Annual recurring" },
-  { field: "totalContractValue", label: "Total contract value" },
 ];
 
 export const INVOICE_TOTALS_FIELDS: { field: InvoiceTotalsField; label: string }[] = [
@@ -394,7 +382,8 @@ function quoteTotal(quote: Quote, field: TotalsField): number {
   const totals = quote.totals;
   switch (field) {
     case "totalDiscount":
-      return totals.listTotal - totals.netTotal;
+      // The two discounts, not list less net: net has overhead added to it.
+      return round(totals.lineDiscountAmount + totals.quoteDiscountAmount, quote.currency);
     case "effectiveDiscountPercent":
       return totals.effectiveDiscountPercent;
     default:
@@ -1019,7 +1008,7 @@ function starterQuoteTemplate(): PdfTemplate {
           },
           {
             heading: "VALID UNTIL",
-            text: "{{quote.validUntil}}\nTerm: {{quote.termMonths}} months\nCurrency: {{quote.currency}}",
+            text: "{{quote.validUntil}}",
             align: "right",
           },
         ],

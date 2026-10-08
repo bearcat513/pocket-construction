@@ -19,16 +19,10 @@ const product = (overrides: Partial<Product> = {}): Product => ({
   description: "Kiln-dried stud.",
   family: "Framing",
   costType: "material",
-  chargeType: "one-time",
-  billingPeriod: "monthly",
   unitOfMeasure: "EA",
   listPrice: 4.28,
   cost: 3.35,
-  currency: "USD",
   active: true,
-  minQuantity: 1,
-  maxQuantity: 0,
-  floorDiscountPercent: 12,
   wasteFactorPercent: 8,
   purchaseMultiple: 0,
   material: { ...EMPTY_MATERIAL, supplierSku: "DF2-2X4-925", supplier: "Harbor Building Supply" },
@@ -37,9 +31,7 @@ const product = (overrides: Partial<Product> = {}): Product => ({
   rules: [],
   components: [],
   volumeTiers: [],
-  attributes: {},
   ownerId: "u1",
-  sharedWith: [],
   createdAt: "",
   updatedAt: "",
   ...overrides,
@@ -278,7 +270,6 @@ describe("applying a change", () => {
     expect(result.cost).toBe(3.55);
     // The fields a contractor actually owns.
     expect(result.wasteFactorPercent).toBe(8);
-    expect(result.floorDiscountPercent).toBe(12);
     expect(result.listPrice).toBe(4.28);
     expect(result.family).toBe("Framing");
   });

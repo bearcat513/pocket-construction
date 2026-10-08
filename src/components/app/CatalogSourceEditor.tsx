@@ -14,7 +14,6 @@ import type { CatalogSourceInput } from "@/lib/validate";
 import {
   COST_TYPE_LABELS,
   COST_TYPES,
-  CURRENCIES,
   DEFAULT_SYNC_POLICY,
   EMPTY_MAPPING,
   MATCH_KEYS,
@@ -518,23 +517,6 @@ export function CatalogSourceEditor({ source, onSave, onClose }: Props) {
                       {COST_TYPES.map(type => (
                         <SelectItem key={type} value={type}>
                           {COST_TYPE_LABELS[type]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Feed's currency">
-                  <Select
-                    value={draft.policy.currency}
-                    onValueChange={value => patchPolicy({ currency: value as SyncPolicy["currency"] })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CURRENCIES.map(code => (
-                        <SelectItem key={code} value={code}>
-                          {code}
                         </SelectItem>
                       ))}
                     </SelectContent>

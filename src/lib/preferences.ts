@@ -1,6 +1,6 @@
 /**
- * Per-account preferences: what a new quote starts as, and what the app shows
- * while you work on one.
+ * Per-account preferences: what a new quote starts as — the company's markup,
+ * overhead and tax — and what the app shows while you work on one.
  *
  * They are stored as one JSON blob on the account's own `users` record, so
  * they travel with the account and need no collection of their own. That blob
@@ -11,8 +11,7 @@
  * normalizes before sending, so both agree on the clamped value without a
  * round trip.
  */
-import { asCurrency, DEFAULT_CURRENCY } from "./money";
-import { CURRENCIES, type CurrencyCode } from "./types";
+import { MAX_MARKUP_PERCENT } from "./pricing";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -72,12 +71,13 @@ export type Preferences = {
   accent: Accent;
   /** The face the app is set in. Headings keep the serif. */
   font: FontChoice;
-  /** The currency a new quote is denominated in. */
-  defaultCurrency: CurrencyCode;
-  /** The price book a new quote starts on; empty means the default book. */
-  defaultPriceBookId: string;
-  /** Subscription length a new quote starts with, in months. */
-  defaultTermMonths: number;
+  /**
+   * The company's markup: what is added to cost to price an item that has no
+   * list price of its own. Copied onto every new estimate, 0-1000.
+   */
+  markupPercent: number;
+  /** Overhead charged on every new estimate's discounted subtotal, 0-100. */
+  overheadPercent: number;
   /** Tax applied to a new quote when the account names none, 0-100. */
   defaultTaxPercent: number;
   /** How long a new quote's pricing is good for, in days. */
@@ -112,7 +112,8 @@ export type Preferences = {
 
 /** Bounds shared by the settings inputs and the normalizer below. */
 export const PREFERENCE_LIMITS = {
-  termMonths: { min: 0, max: 600 },
+  markupPercent: { min: 0, max: MAX_MARKUP_PERCENT },
+  overheadPercent: { min: 0, max: 100 },
   validDays: { min: 1, max: 365 },
   quoteList: { min: 5, max: 200 },
   taxPercent: { min: 0, max: 100 },
@@ -122,9 +123,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
   accent: "cobalt",
   font: "sans",
-  defaultCurrency: DEFAULT_CURRENCY,
-  defaultPriceBookId: "",
-  defaultTermMonths: 12,
+  markupPercent: 0,
+  overheadPercent: 0,
   defaultTaxPercent: 0,
   quoteValidDays: 30,
   defaultProposalTemplateId: "",
@@ -141,8 +141,6 @@ export const THEMES: Theme[] = ["system", "light", "dark"];
 /** The one member of a closed list, or the default. */
 const oneOf = <T extends string>(list: readonly T[], value: unknown, fallback: T): T =>
   list.includes(value as T) ? (value as T) : fallback;
-
-export { CURRENCIES };
 
 /** Record ids are minted by `newId()` in src/server/db.ts: `pb_1a2b3c4d`. */
 const RECORD_ID = /^[a-z0-9_]{3,40}$/;
@@ -182,9 +180,13 @@ export function normalizePreferences(raw: unknown): Preferences {
     theme: oneOf(THEMES, input.theme, DEFAULT_PREFERENCES.theme),
     accent: oneOf(ACCENTS.map(a => a.id), input.accent, DEFAULT_PREFERENCES.accent),
     font: oneOf(FONTS.map(f => f.id), input.font, DEFAULT_PREFERENCES.font),
-    defaultCurrency: asCurrency(input.defaultCurrency, DEFAULT_PREFERENCES.defaultCurrency),
-    defaultPriceBookId: asRecordId(input.defaultPriceBookId),
-    defaultTermMonths: asNumber(input.defaultTermMonths, DEFAULT_PREFERENCES.defaultTermMonths, PREFERENCE_LIMITS.termMonths),
+    markupPercent: asNumber(input.markupPercent, DEFAULT_PREFERENCES.markupPercent, PREFERENCE_LIMITS.markupPercent, false),
+    overheadPercent: asNumber(
+      input.overheadPercent,
+      DEFAULT_PREFERENCES.overheadPercent,
+      PREFERENCE_LIMITS.overheadPercent,
+      false,
+    ),
     defaultTaxPercent: asNumber(
       input.defaultTaxPercent,
       DEFAULT_PREFERENCES.defaultTaxPercent,

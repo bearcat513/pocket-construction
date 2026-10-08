@@ -39,13 +39,7 @@ import type {
 /* -------------------------------- roll-up -------------------------------- */
 
 /** Estimates still in play: nobody has said yes or no, and the clock has not run out. */
-const OPEN_STATUSES: ReadonlySet<QuoteStatus> = new Set<QuoteStatus>([
-  "draft",
-  "in_review",
-  "approved",
-  "rejected",
-  "sent",
-]);
+const OPEN_STATUSES: ReadonlySet<QuoteStatus> = new Set<QuoteStatus>(["draft", "sent"]);
 
 export type ProjectStats = {
   /** The project's own currency — the only one anything here is summed in. */

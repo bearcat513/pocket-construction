@@ -63,17 +63,21 @@ describe("reading a catalogue spreadsheet", () => {
     expect(catalog.products[0]!.listPrice).toBe(1019.2);
   });
 
-  test("specification and attributes land in the right place", () => {
+  test("specification lands in the right place", () => {
     const catalog = parse(
-      `${HEADER},manufacturer,coverage,coverageUnit,submittalRequired,attributes\n` +
-        `OSB,OSB 7/16,SHT,18.9,Cascade,32,sf,yes,Span=24/16; Exposure=Exposure 1`,
+      `${HEADER},manufacturer,coverage,coverageUnit,submittalRequired\n` + `OSB,OSB 7/16,SHT,18.9,Cascade,32,sf,yes`,
     );
     const [item] = catalog.products;
     expect(item!.material.manufacturer).toBe("Cascade");
     expect(item!.material.coverage).toBe(32);
     expect(item!.material.coverageUnit).toBe("SF");
     expect(item!.material.submittalRequired).toBe(true);
-    expect(item!.attributes).toEqual({ Span: "24/16", Exposure: "Exposure 1" });
+  });
+
+  test("an older export's retired columns are ignored without complaint", () => {
+    const catalog = parse(`${HEADER},chargeType,currency,minQuantity,floorDiscountPercent\nA,Alpha,EA,10,one-time,USD,1,10`);
+    expect(catalog.products).toHaveLength(1);
+    expect(catalog.warnings).toEqual([]);
   });
 });
 

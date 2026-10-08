@@ -187,15 +187,13 @@ const BILLABLE: Quote["status"][] = ["sent", "accepted"];
  *
  * ## What becomes a line
  *
- * One line per quote line, plus a line each for the quote-level discount, any
- * quote-level pricing adjustment, and shipping — because an invoice that
+ * One line per quote line, plus a line each for the quote-level discount, the
+ * overhead, and shipping — because an invoice that
  * folded those into the line prices would not add up to anything the customer
  * could check against the quote they signed.
  *
- * A recurring line is billed for its whole term: `quantity × periods` at the
- * quote's unit price, with the term spelled out in the description. Invoicing
- * a 36-month subscription monthly is a billing schedule, which is the next
- * thing to build here and deliberately not this.
+ * A line is billed for its order quantity — what was priced, waste and lot
+ * rounding included — at the quote's unit price.
  *
  * ## Reconciliation
  *
@@ -270,19 +268,14 @@ export function linesFromQuote(quote: Quote): InvoiceLine[] {
   const lines: InvoiceLine[] = [];
 
   for (const line of quote.lines) {
-    const recurring = line.chargeType === "recurring" && line.periods > 1;
-    const detail = [line.optionNames.join(", "), recurring ? `${line.termMonths} months` : ""]
-      .filter(Boolean)
-      .join(" · ");
-
     lines.push({
       id: localId("inl"),
       sourceLineId: line.id,
       sku: line.sku,
-      description: [line.description || line.name, detail].filter(Boolean).join(" — "),
-      // A recurring line is billed for every period of its term, which is what
-      // makes the line's amount equal the value the quote committed to.
-      quantity: line.quantity * Math.max(1, line.periods),
+      description: [line.description || line.name, line.optionNames.join(", ")].filter(Boolean).join(" — "),
+      // What was priced is what is billed: the order quantity, waste and lot
+      // rounding included, not the take-off it was worked out from.
+      quantity: line.orderQuantity ?? line.quantity,
       unitPrice: line.unitPrice,
       amount: 0,
       taxPercent: tax,
@@ -309,8 +302,8 @@ export function linesFromQuote(quote: Quote): InvoiceLine[] {
   if (quote.totals.quoteDiscountAmount > 0) {
     extra(`Quote discount (${quote.discountPercent}%)`, -quote.totals.quoteDiscountAmount);
   }
-  if (quote.totals.quoteAdjustment !== 0) {
-    extra("Adjustment", quote.totals.quoteAdjustment);
+  if (quote.totals.overheadAmount) {
+    extra(`Overhead (${quote.overheadPercent}%)`, quote.totals.overheadAmount);
   }
   if (quote.totals.shipping > 0) {
     extra("Shipping", quote.totals.shipping);

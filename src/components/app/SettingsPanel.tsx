@@ -26,12 +26,11 @@ import { TelegramNotifications } from "./TelegramNotifications";
 import { Section } from "./common";
 import { api, type Meta, type SessionUser } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { ACCENTS, CURRENCIES, FONTS, PREFERENCE_LIMITS, THEMES, type Preferences } from "@/lib/preferences";
-import type { PriceBook, ProposalTemplate } from "@/lib/types";
+import { ACCENTS, FONTS, PREFERENCE_LIMITS, THEMES, type Preferences } from "@/lib/preferences";
+import type { ProposalTemplate } from "@/lib/types";
 import {
   SAMPLE_ACCOUNTS,
   SAMPLE_INVOICES,
-  SAMPLE_PRICE_BOOKS,
   SAMPLE_PRODUCTS,
   SAMPLE_PROJECTS,
   SAMPLE_TEMPLATES,
@@ -40,8 +39,8 @@ import { cn } from "@/lib/utils";
 
 /** Counted from the sample itself, so the sentence cannot fall behind it. */
 const SAMPLE_SUMMARY =
-  `${SAMPLE_PRODUCTS.length} catalogue items, ${SAMPLE_PRICE_BOOKS.length} price books, ` +
-  `${SAMPLE_ACCOUNTS.length} clients with ${SAMPLE_PROJECTS.length} jobs, an estimate that needs approval, ` +
+  `${SAMPLE_PRODUCTS.length} catalogue items, ` +
+  `${SAMPLE_ACCOUNTS.length} clients with ${SAMPLE_PROJECTS.length} jobs, an estimate priced from them, ` +
   `${SAMPLE_INVOICES.length} invoices and ${SAMPLE_TEMPLATES.length} document templates.`;
 
 export type SaveState = "idle" | "saving" | "saved";
@@ -53,7 +52,6 @@ type Props = {
   onTab: (tab: string) => void;
   preferences: Preferences;
   saveState: SaveState;
-  priceBooks: PriceBook[];
   templates: ProposalTemplate[];
   meta: Meta | null;
   hasCatalogue: boolean;
@@ -90,7 +88,7 @@ const TABS: { id: Tab; label: string; Icon: LucideIcon; description: string; aut
     id: "documents",
     label: "Estimates & invoices",
     Icon: FileText,
-    description: "What a new estimate or invoice starts as. Saved automatically.",
+    description: "Your markup, overhead and tax, and what a new estimate or invoice starts as. Saved automatically.",
     autosaves: true,
   },
   { id: "account", label: "Account", Icon: UserRound, description: "Who you are signed in as, and your password." },
@@ -188,7 +186,6 @@ export function SettingsPanel(props: Props) {
         ) : tab === "documents" ? (
           <DocumentsTab
             preferences={props.preferences}
-            priceBooks={props.priceBooks}
             templates={props.templates}
             onChange={props.onChange}
           />
@@ -454,12 +451,7 @@ function AppearanceTab({ preferences, onChange }: PreferenceProps) {
 
 /* ---------------------------- estimates, invoices --------------------------- */
 
-function DocumentsTab({
-  preferences,
-  priceBooks,
-  templates,
-  onChange,
-}: PreferenceProps & { priceBooks: PriceBook[]; templates: ProposalTemplate[] }) {
+function DocumentsTab({ preferences, templates, onChange }: PreferenceProps & { templates: ProposalTemplate[] }) {
   const templateSelect = (
     id: string,
     kind: ProposalTemplate["kind"],
@@ -485,41 +477,39 @@ function DocumentsTab({
 
   return (
     <>
-      <SettingsGroup title="Pricing">
-        <SettingRow label="Currency" hint="What a new estimate is written in." htmlFor="pref-currency">
-          <Select
-            value={preferences.defaultCurrency}
-            onValueChange={value => onChange({ defaultCurrency: value as Preferences["defaultCurrency"] })}
-          >
-            <SelectTrigger id="pref-currency" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CURRENCIES.map(code => (
-                <SelectItem key={code} value={code}>
-                  {code}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <SettingsGroup
+        title="Pricing"
+        description="Each estimate copies these when it is created and keeps its own from then on, so changing them never reprices one that has already gone out."
+      >
+        <SettingRow
+          label="Markup"
+          hint="In percent, on cost — what an item with no list price of its own sells for."
+          htmlFor="pref-markup"
+        >
+          <Input
+            id="pref-markup"
+            type="number"
+            min={PREFERENCE_LIMITS.markupPercent.min}
+            max={PREFERENCE_LIMITS.markupPercent.max}
+            step="0.5"
+            value={preferences.markupPercent}
+            onChange={event => onChange({ markupPercent: Number(event.target.value) })}
+          />
         </SettingRow>
-        <SettingRow label="Price book" hint="Where a new estimate's prices come from." htmlFor="pref-book">
-          <Select
-            value={preferences.defaultPriceBookId || "default"}
-            onValueChange={value => onChange({ defaultPriceBookId: value === "default" ? "" : value })}
-          >
-            <SelectTrigger id="pref-book" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="default">Whichever book is marked default</SelectItem>
-              {priceBooks.map(book => (
-                <SelectItem key={book.id} value={book.id}>
-                  {book.name} ({book.currency})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <SettingRow
+          label="Overhead"
+          hint="In percent, added to an estimate after its discount — the yard, the trucks, the office."
+          htmlFor="pref-overhead"
+        >
+          <Input
+            id="pref-overhead"
+            type="number"
+            min={PREFERENCE_LIMITS.overheadPercent.min}
+            max={PREFERENCE_LIMITS.overheadPercent.max}
+            step="0.5"
+            value={preferences.overheadPercent}
+            onChange={event => onChange({ overheadPercent: Number(event.target.value) })}
+          />
         </SettingRow>
         <SettingRow label="Tax rate" hint="In percent. A client's own rate wins over this." htmlFor="pref-tax">
           <Input
@@ -535,16 +525,6 @@ function DocumentsTab({
       </SettingsGroup>
 
       <SettingsGroup title="Estimates">
-        <SettingRow label="Term" hint="In months — how long rentals and other recurring lines run." htmlFor="pref-term">
-          <Input
-            id="pref-term"
-            type="number"
-            min={PREFERENCE_LIMITS.termMonths.min}
-            max={PREFERENCE_LIMITS.termMonths.max}
-            value={preferences.defaultTermMonths}
-            onChange={event => onChange({ defaultTermMonths: Number(event.target.value) })}
-          />
-        </SettingRow>
         <SettingRow label="Valid for" hint="In days, from the day the estimate is written." htmlFor="pref-valid">
           <Input
             id="pref-valid"
@@ -608,7 +588,7 @@ function AccountTab({
   return (
     <>
       <SettingsGroup title="Profile">
-        <SettingRow label="Email" hint="What you sign in with, and what approvers and shares are addressed to.">
+        <SettingRow label="Email" hint="What you sign in with, and what shares are addressed to.">
           <p className="truncate text-sm @xl:text-right">{me.email}</p>
         </SettingRow>
         {me.name && (
@@ -716,7 +696,7 @@ function DataTab({
             </Button>
           </div>
         </SettingRow>
-        <SettingRow label="Catalogue" hint="Items, price books and rules as *.catalog.json — imports into another workspace." wide>
+        <SettingRow label="Catalogue" hint="Every item as *.catalog.json — imports into another workspace." wide>
           <div className={cell}>
             <Button variant="outline" size="sm" asChild>
               <a href={api.catalogExportUrl}>
@@ -764,7 +744,6 @@ function DataTab({
               <div className="grid grid-cols-2 gap-px bg-border @md:grid-cols-3">
                 {[
                   ["Items", meta.products],
-                  ["Price books", meta.priceBooks],
                   ["Clients", meta.accounts],
                   ["Estimates", meta.quotes],
                   ["Invoices", meta.invoices],

@@ -13,8 +13,8 @@
  * Version 3.0.3 rather than 3.1: every tool that matters reads 3.0 today, and
  * nothing described here needs what 3.1 added.
  *
- * Where a bound is enforced elsewhere — a template body, a contact list, the
- * approver cap — it is imported rather than retyped, so the document cannot
+ * Where a bound is enforced elsewhere — a template body, a contact list, a
+ * markup — it is imported rather than retyped, so the document cannot
  * promise a limit the server does not keep.
  */
 import { MAX_PDF_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NAME_LENGTH } from "../lib/document";
@@ -27,21 +27,16 @@ import { AGING_BUCKETS } from "../lib/receivable";
 import { QUOTE_PAGE_MAX, QUOTE_SORTS } from "../lib/quoteSearch";
 import {
   ACCOUNT_STATUSES,
-  APPROVAL_METRICS,
   CONTRACT_TYPES,
   COST_TYPES,
   CSI_DIVISIONS,
   MATCH_KEYS,
-  BILLING_PERIODS,
-  CHARGE_TYPES,
-  COMPARATORS,
   CONTACT_ROLES,
   CREDIT_REASONS,
   CURRENCIES,
   INVOICE_STATES,
   INVOICE_STATUSES,
   PAYMENT_METHODS,
-  PRICING_RULE_TARGETS,
   PRODUCT_RULE_KINDS,
   PROJECT_STATUSES,
   PROPOSAL_FORMATS,
@@ -52,7 +47,7 @@ import {
   TIER_KINDS,
   UNITS_OF_MEASURE,
 } from "../lib/types";
-import { MAX_APPROVERS, MAX_CONTACTS, MAX_INVOICE_LINES, MAX_LEDGER_ENTRIES, MAX_TAGS } from "../lib/validate";
+import { MAX_CONTACTS, MAX_INVOICE_LINES, MAX_LEDGER_ENTRIES, MAX_TAGS } from "../lib/validate";
 import { MAX_EXPIRY_DAYS, MAX_KEY_NAME_LENGTH, MAX_KEYS } from "./apiKeys";
 import { API_KEY_HEADER, API_KEY_PREFIX, SESSION_COOKIE } from "./session";
 import { MAX_MIN_ROWS } from "../lib/telegram";
@@ -284,7 +279,7 @@ export const OPERATIONS: Operation[] = [
     summary: "This index, the auth options, and the rules this app prices by",
     description:
       "The endpoint list here is generated from the same operations as this document, so the two " +
-      "cannot disagree. Beside it are the pricing pipeline, the approval ladder, the receivables " +
+      "cannot disagree. Beside it are the pricing pipeline, the receivables " +
       "conventions and the document vocabularies — the things worth reading before the first call.",
     anonymous: true,
     responses: { "200": jsonResponse("The index.", { type: "object", additionalProperties: true }) },
@@ -339,7 +334,7 @@ export const OPERATIONS: Operation[] = [
     operationId: "getDirectory",
     summary: "The accounts on this instance (?search=) — id, email and name only",
     description:
-      "What the approver and share pickers offer. PocketBase answers it, since reading the user " +
+      "What the share and project pickers offer. PocketBase answers it, since reading the user " +
       "list needs authority no user token carries.",
     parameters: [queryParam("search", "Narrow the list by name or email.", { type: "string" })],
     responses: { "200": jsonResponse("The directory.", ref("Directory")) },
@@ -736,7 +731,7 @@ export const OPERATIONS: Operation[] = [
     path: "/api/products/{id}/configure",
     tag: "Catalogue",
     operationId: "configureProduct",
-    summary: "{ selectedOptions, quantity, termMonths } → validate a configuration",
+    summary: "{ selectedOptions, quantity } → validate a configuration",
     description:
       "Runs the product's option groups and configuration rules without pricing or storing " +
       "anything: what the selection resolves to, which groups and options it is actually offered, " +
@@ -748,55 +743,10 @@ export const OPERATIONS: Operation[] = [
   },
   {
     method: "get",
-    path: "/api/price-books",
-    tag: "Catalogue",
-    operationId: "listPriceBooks",
-    summary: "List price books",
-    responses: { "200": jsonResponse("The price books.", array(ref("PriceBook"))) },
-  },
-  {
-    method: "post",
-    path: "/api/price-books",
-    tag: "Catalogue",
-    operationId: "createPriceBook",
-    summary: "Create a price book",
-    requestBody: jsonBody("The price book.", ref("PriceBookInput")),
-    responses: { "201": jsonResponse("The price book, as stored.", ref("PriceBook")) },
-  },
-  {
-    method: "get",
-    path: "/api/price-books/{id}",
-    tag: "Catalogue",
-    operationId: "getPriceBook",
-    summary: "Read one price book",
-    parameters: [idParam("price book")],
-    responses: { "200": jsonResponse("The price book.", ref("PriceBook")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "put",
-    path: "/api/price-books/{id}",
-    tag: "Catalogue",
-    operationId: "updatePriceBook",
-    summary: "Replace one price book (owner only)",
-    parameters: [idParam("price book")],
-    requestBody: jsonBody("The price book, whole.", ref("PriceBookInput")),
-    responses: { "200": jsonResponse("The price book, as stored.", ref("PriceBook")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "delete",
-    path: "/api/price-books/{id}",
-    tag: "Catalogue",
-    operationId: "deletePriceBook",
-    summary: "Delete one price book (owner only)",
-    parameters: [idParam("price book")],
-    responses: { "200": jsonResponse("Deleted.", ref("Ok")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "get",
     path: "/api/catalog/export",
     tag: "Catalogue",
     operationId: "exportCatalog",
-    summary: "Download products, price books and rules as *.catalog.json",
+    summary: "Download the catalogue as *.catalog.json",
     responses: { "200": fileResponse("The catalogue file.", "application/json") },
   },
   {
@@ -959,112 +909,18 @@ export const OPERATIONS: Operation[] = [
     },
   },
 
-  /* -------------------------------- rules ------------------------------- */
-  {
-    method: "get",
-    path: "/api/pricing-rules",
-    tag: "Rules",
-    operationId: "listPricingRules",
-    summary: "List pricing rules",
-    responses: { "200": jsonResponse("The rules, in priority order.", array(ref("PricingRule"))) },
-  },
-  {
-    method: "post",
-    path: "/api/pricing-rules",
-    tag: "Rules",
-    operationId: "createPricingRule",
-    summary: "Create a pricing rule",
-    requestBody: jsonBody("The rule.", ref("PricingRuleInput")),
-    responses: { "201": jsonResponse("The rule, as stored.", ref("PricingRule")) },
-  },
-  {
-    method: "get",
-    path: "/api/pricing-rules/{id}",
-    tag: "Rules",
-    operationId: "getPricingRule",
-    summary: "Read one pricing rule",
-    parameters: [idParam("rule")],
-    responses: { "200": jsonResponse("The rule.", ref("PricingRule")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "put",
-    path: "/api/pricing-rules/{id}",
-    tag: "Rules",
-    operationId: "updatePricingRule",
-    summary: "Replace one pricing rule",
-    parameters: [idParam("rule")],
-    requestBody: jsonBody("The rule, whole.", ref("PricingRuleInput")),
-    responses: { "200": jsonResponse("The rule, as stored.", ref("PricingRule")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "delete",
-    path: "/api/pricing-rules/{id}",
-    tag: "Rules",
-    operationId: "deletePricingRule",
-    summary: "Delete one pricing rule",
-    parameters: [idParam("rule")],
-    responses: { "200": jsonResponse("Deleted.", ref("Ok")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "get",
-    path: "/api/approval-rules",
-    tag: "Rules",
-    operationId: "listApprovalRules",
-    summary: "List approval rules",
-    responses: { "200": jsonResponse("The ladder.", array(ref("ApprovalRule"))) },
-  },
-  {
-    method: "post",
-    path: "/api/approval-rules",
-    tag: "Rules",
-    operationId: "createApprovalRule",
-    summary: "Create an approval rule",
-    description:
-      "A rule asks everyone on it at once, and carries its own approve and reject quorums — " +
-      "`approvalsRequired` of them must say yes, `rejectionsRequired` must say no. Both are " +
-      "clamped to the number of approvers rather than refused.",
-    requestBody: jsonBody("The rule.", ref("ApprovalRuleInput")),
-    responses: { "201": jsonResponse("The rule, as stored.", ref("ApprovalRule")) },
-  },
-  {
-    method: "get",
-    path: "/api/approval-rules/{id}",
-    tag: "Rules",
-    operationId: "getApprovalRule",
-    summary: "Read one approval rule",
-    parameters: [idParam("rule")],
-    responses: { "200": jsonResponse("The rule.", ref("ApprovalRule")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "put",
-    path: "/api/approval-rules/{id}",
-    tag: "Rules",
-    operationId: "updateApprovalRule",
-    summary: "Replace one approval rule",
-    parameters: [idParam("rule")],
-    requestBody: jsonBody("The rule, whole.", ref("ApprovalRuleInput")),
-    responses: { "200": jsonResponse("The rule, as stored.", ref("ApprovalRule")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "delete",
-    path: "/api/approval-rules/{id}",
-    tag: "Rules",
-    operationId: "deleteApprovalRule",
-    summary: "Delete one approval rule",
-    parameters: [idParam("rule")],
-    responses: { "200": jsonResponse("Deleted.", ref("Ok")), "404": responseRef("NotFound") },
-  },
   {
     method: "post",
     path: "/api/formula/validate",
-    tag: "Rules",
+    tag: "Catalogue",
     operationId: "validateFormula",
-    summary: "{ expression, scope } → check a pricing or approval formula",
+    summary: "{ expression, optionKeys? } → check an item's validation formula",
     description:
       "The expression language in `src/lib/formula.ts`: arithmetic, comparisons and logic, parsed " +
       "to a tree and evaluated by hand — never `eval`. Checks that it parses and that every name " +
-      "in it is a variable that scope actually has.",
-    requestBody: jsonBody("The formula and the scope it will run in.", ref("FormulaInput")),
+      "in it is one a `validate` rule can see: `quantity`, `selectedCount`, and `option.<key>` " +
+      "for each key named in `optionKeys`.",
+    requestBody: jsonBody("The formula, and the item's option keys.", ref("FormulaInput")),
     responses: { "200": jsonResponse("Whether it parses, and what it may name.", ref("FormulaCheck")) },
   },
 
@@ -1090,7 +946,8 @@ export const OPERATIONS: Operation[] = [
     description:
       "Totals in the body are ignored and overwritten. The server runs the same pricing engine " +
       "the browser does (`src/lib/pricing.ts`), so what is stored is what the engine says, not " +
-      "what the caller claimed.",
+      "what the caller claimed. Leave `markupPercent` or `overheadPercent` out to take the " +
+      "settings' own.",
     requestBody: jsonBody("The quote header and its lines.", ref("QuoteInput")),
     responses: { "201": jsonResponse("The quote, priced and stored.", ref("SavedQuote")) },
   },
@@ -1120,25 +977,14 @@ export const OPERATIONS: Operation[] = [
     responses: { "200": jsonResponse("One page of matches, with the totals.", ref("QuotePage")) },
   },
   {
-    method: "get",
-    path: "/api/quotes/awaiting",
-    tag: "Quotes",
-    operationId: "listQuotesAwaitingMe",
-    summary: "Quotes waiting on your approval",
-    description:
-      "An approver sees the quotes a rule named them on, and nothing else of that account's. " +
-      "Answer one with `POST /api/quotes/{id}/decision`.",
-    responses: { "200": jsonResponse("Quotes you are being asked about.", array(ref("QuoteSummary"))) },
-  },
-  {
     method: "post",
     path: "/api/quotes/preview",
     tag: "Quotes",
     operationId: "previewQuote",
     summary: "Price a quote without storing it",
     description:
-      "The same pipeline as a save, with nothing written: the priced lines, the totals, the " +
-      "issues and warnings, and the approvals it would need.",
+      "The same pipeline as a save, with nothing written: the priced lines, the totals, and the " +
+      "issues and warnings.",
     requestBody: jsonBody("The quote to price.", ref("QuoteInput")),
     responses: { "200": jsonResponse("What it would come to.", ref("QuotePreview")) },
   },
@@ -1158,9 +1004,8 @@ export const OPERATIONS: Operation[] = [
     operationId: "updateQuote",
     summary: "Replace a draft quote — the server reprices it",
     description:
-      "Editable in `draft` and `rejected` only; anything else is revised rather than edited. An " +
-      "edit voids any approval decisions the quote had — they are recomputed from scratch on the " +
-      "next submit.",
+      "Editable in `draft` only; anything else is revised rather than edited. Leave `markupPercent` " +
+      "or `overheadPercent` out to keep the quote's own.",
     parameters: [idParam("quote")],
     requestBody: jsonBody("The quote, whole.", ref("QuoteInput")),
     responses: { "200": jsonResponse("The quote, repriced.", ref("SavedQuote")), "404": responseRef("NotFound") },
@@ -1176,36 +1021,13 @@ export const OPERATIONS: Operation[] = [
   },
   {
     method: "post",
-    path: "/api/quotes/{id}/submit",
-    tag: "Quotes",
-    operationId: "submitQuote",
-    summary: "Reprice, run the approval rules, and submit",
-    description:
-      "Levels are cumulative: a quote needs every level at or below the highest one it trips. A " +
-      "quote that trips nothing is approved outright, and the response says so.",
-    parameters: [idParam("quote")],
-    responses: { "200": jsonResponse("Where the quote now stands.", ref("SubmitResult")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "post",
-    path: "/api/quotes/{id}/decision",
-    tag: "Quotes",
-    operationId: "decideQuote",
-    summary: "{ decision: approved|rejected, comment? } → answer as an approver",
-    description:
-      "One person's answer on every request they are named on. A request's own status is derived " +
-      "from the answers it holds against its two quorums — it is never assigned.",
-    parameters: [idParam("quote")],
-    requestBody: jsonBody("Your answer.", ref("DecisionInput")),
-    responses: { "200": jsonResponse("The quote, as it now stands.", ref("Quote")), "404": responseRef("NotFound") },
-  },
-  {
-    method: "post",
     path: "/api/quotes/{id}/status",
     tag: "Quotes",
     operationId: "setQuoteStatus",
     summary: "{ status } → sent, accepted, declined, or back to draft",
-    description: "Only the transitions the quote's current status allows; the rest are refused by name.",
+    description:
+      "Only the transitions the quote's current status allows; the rest are refused by name. A quote " +
+      "with a line the catalogue can no longer price, or a configuration it refuses, cannot be sent.",
     parameters: [idParam("quote")],
     requestBody: jsonBody("The status to move to.", ref("StatusInput")),
     responses: { "200": jsonResponse("The quote.", ref("Quote")), "404": responseRef("NotFound") },
@@ -1570,8 +1392,6 @@ export const OPERATIONS: Operation[] = [
   /* ------------------------------- sharing ------------------------------ */
   ...shareOperations("projects", "a project", "project"),
   ...shareOperations("catalog-sources", "a supplier feed", "catalogSource"),
-  ...shareOperations("products", "a product", "product"),
-  ...shareOperations("price-books", "a price book", "priceBook"),
   ...shareOperations("quotes", "a quote", "quote"),
   ...shareOperations("invoices", "an invoice", "invoice"),
   ...shareOperations("proposal-templates", "a template", "template"),
@@ -1906,7 +1726,7 @@ const object = (description: string, properties: Record<string, Json>, required:
   ...(required.length ? { required } : {}),
 });
 
-const currency = () => enum_(CURRENCIES, "ISO 4217 code. Nothing in this app ever adds two currencies.");
+const currency = () => enum_(CURRENCIES, "ISO 4217 code. The app works in one currency, so this is `USD`.");
 
 const ownership = {
   ownerId: id("The account that owns it."),
@@ -1927,8 +1747,8 @@ function preferencesSchema(): Json {
     theme: { enum: [...THEMES] },
     accent: { enum: ACCENTS.map(accent => accent.id) },
     font: { enum: FONTS.map(font => font.id) },
-    defaultCurrency: { enum: [...CURRENCIES] },
-    defaultTermMonths: { minimum: PREFERENCE_LIMITS.termMonths.min, maximum: PREFERENCE_LIMITS.termMonths.max },
+    markupPercent: { minimum: PREFERENCE_LIMITS.markupPercent.min, maximum: PREFERENCE_LIMITS.markupPercent.max },
+    overheadPercent: { minimum: PREFERENCE_LIMITS.overheadPercent.min, maximum: PREFERENCE_LIMITS.overheadPercent.max },
     defaultTaxPercent: { minimum: PREFERENCE_LIMITS.taxPercent.min, maximum: PREFERENCE_LIMITS.taxPercent.max },
     quoteValidDays: { minimum: PREFERENCE_LIMITS.validDays.min, maximum: PREFERENCE_LIMITS.validDays.max },
     quoteListLimit: { minimum: PREFERENCE_LIMITS.quoteList.min, maximum: PREFERENCE_LIMITS.quoteList.max },
@@ -1944,8 +1764,9 @@ function preferencesSchema(): Json {
   }
 
   return object(
-    "Per-account defaults. Out-of-range values are clamped rather than refused, and a key that is " +
-      "missing falls back to its default.",
+    "Per-account settings — among them the markup, overhead and tax a new estimate starts with. " +
+      "Out-of-range values are clamped rather than refused, and a key that is missing falls back to " +
+      "its default.",
     properties,
   );
 }
@@ -1980,25 +1801,18 @@ function schemas(): Record<string, Json> {
     currency: currency(),
     lineCount: integer_("How many lines."),
     listTotal: money("Undiscounted value of every line."),
-    lineDiscountAmount: money("Line-level discounts, tiers and rules, as money."),
+    lineDiscountAmount: money("Line-level discounts and tiers, as money."),
     subtotal: money("After line discounts, before the quote-level discount."),
     quoteDiscountAmount: money("The whole-quote discount, as money."),
-    quoteAdjustment: money(
-      "What quote-scoped pricing rules added or took off. Kept apart from the discount because a " +
-        "surcharge is not a negative discount.",
-    ),
-    netTotal: money("After every discount and adjustment, before tax."),
+    overheadAmount: money("The quote's overhead percentage of the discounted subtotal."),
+    netTotal: money("After every discount, plus overhead, before tax."),
     taxAmount: money("Tax."),
     shipping: money("Shipping."),
     grandTotal: money("What the customer is being asked for."),
-    effectiveDiscountPercent: percent("`listTotal` − `netTotal`, over `listTotal`. The number an approver reads."),
+    effectiveDiscountPercent: percent("Every discount, over `listTotal`. Overhead is a charge, and not counted."),
     costTotal: money("Cost of delivery. Never shown to a buyer."),
     margin: money("`netTotal` − `costTotal`."),
     marginPercent: number_("Margin over net total."),
-    oneTimeTotal: money("One-time charges."),
-    monthlyRecurringTotal: money("MRR."),
-    annualRecurringTotal: money("ARR."),
-    totalContractValue: money("One-time charges plus the full recurring value of the term."),
   });
 
   const quoteLineInput = object("One line as a caller writes it. Everything priced is derived from these.", {
@@ -2006,11 +1820,10 @@ function schemas(): Record<string, Json> {
     productId: id("The product this line sells."),
     quantity: number_("How many."),
     discountPercent: percent("A manual discount the rep applied."),
-    unitPriceOverride: number_("A negotiated unit price. `null` means whatever the price book says.", {
+    unitPriceOverride: number_("A negotiated unit price. `null` means whatever the catalogue says.", {
       nullable: true,
     }),
     selectedOptions: array(string_("An option key, from any group on the product.")),
-    termMonths: integer_("Subscription length for this line. `0` uses the quote's term."),
     description: string_("A note that replaces the catalogue description on the document."),
     parentId: string_("The bundle line this came from. Component lines are not editable.", { nullable: true }),
     sortOrder: integer_("Where it sits in the list."),
@@ -2033,7 +1846,7 @@ function schemas(): Record<string, Json> {
   /**
    * A quote's own fields, shared by `Quote` and `QuoteSummary`.
    *
-   * The summary is the quote minus its lines and its approval requests, so
+   * The summary is the quote minus its lines, so
    * spelling the header out twice would be two lists that could disagree
    * about what a quote is.
    */
@@ -2047,9 +1860,12 @@ function schemas(): Record<string, Json> {
     projectId: id("The job it is for. Empty is ordinary: a bid is often written before there is a job."),
     projectName: string_("That job's number and name, snapshotted, so a list reads without a join."),
     customer: ref("CustomerSnapshot"),
-    priceBookId: id("The book it was priced from."),
     currency: currency(),
-    termMonths: integer_("Default term for recurring lines that name none."),
+    markupPercent: number_("Added to cost to price an item with no list price. Copied from the settings when the quote is created.", {
+      minimum: 0,
+      maximum: PREFERENCE_LIMITS.markupPercent.max,
+    }),
+    overheadPercent: percent("Charged on the discounted subtotal. Copied from the settings when the quote is created."),
     discountPercent: percent("The whole-quote discount."),
     taxPercent: percent("The rate."),
     shipping: money("Shipping."),
@@ -2057,7 +1873,6 @@ function schemas(): Record<string, Json> {
     notes: string_("Shown to the customer."),
     internalNotes: string_("Not shown to the customer."),
     totals: ref("QuoteTotals"),
-    approverIds: array(id("Who the quote is waiting on, flattened for the access rules.")),
     sentAt: string_("When it went out."),
     decidedAt: string_("When it was accepted or declined."),
     ...ownership,
@@ -2259,7 +2074,6 @@ function schemas(): Record<string, Json> {
       reachable: boolean_("Whether it answered."),
       accounts: integer_("Customers.", { nullable: true }),
       products: integer_("Products.", { nullable: true }),
-      priceBooks: integer_("Price books.", { nullable: true }),
       quotes: integer_("Quotes.", { nullable: true }),
       invoices: integer_("Invoices.", { nullable: true }),
       proposalTemplates: integer_("Templates.", { nullable: true }),
@@ -2403,7 +2217,6 @@ function schemas(): Record<string, Json> {
             "has to check the flag before reading it.",
         ),
         currency: currency(),
-        priceBookId: string_("The book their quotes start on. Empty uses the default book."),
         paymentTerms: string_('As written — "Net 30".'),
         paymentTermDays: integer_(
           "The same terms as a number, which is the form a due date can be computed from. Seeded " +
@@ -2482,7 +2295,7 @@ function schemas(): Record<string, Json> {
         sku: string_("The catalogue key — letters, digits, dot, dash, underscore. Upper-cased."),
         name: string_("What it is called."),
         description: string_("Catalogue copy."),
-        family: string_('Free grouping — "Framing", "Roofing". Pricing rules can target it.'),
+        family: string_('Free grouping — "Framing", "Roofing".'),
         costType: enum_(
           COST_TYPES,
           "How a job cost report adds it up. A real column, because the materials list filters on it.",
@@ -2492,22 +2305,17 @@ function schemas(): Record<string, Json> {
           "CSI MasterFormat division, two digits. Empty is unclassified.",
         ),
         manufacturer: string_("Who makes it. A real column: the materials list filters on it."),
-        chargeType: enum_(CHARGE_TYPES, "*When* it is billed. Equipment rented by the month is `recurring`."),
-        billingPeriod: enum_(BILLING_PERIODS, "Recurring items only."),
         unitOfMeasure: enum_(
           UNITS_OF_MEASURE,
           "A closed list, not free text: a catalogue that cannot tell `SF` from `sq ft` will multiply a " +
-            "price per square foot by a quantity in sheets.",
+            "price per square foot by a quantity in sheets. Equipment rented by the month is an item in `MO`.",
         ),
-        listPrice: money("The catalogue price. A price book overrides it per customer."),
+        listPrice: money(
+          "The sell price per unit. `0` prices it from cost: the line sells at `cost` plus the quote's " +
+            "`markupPercent`.",
+        ),
         cost: money("What one unit costs to deliver. Drives margin, and is never shown to a buyer."),
-        currency: currency(),
         active: boolean_("Whether it can be quoted."),
-        minQuantity: integer_("Smallest quantity a line may carry."),
-        maxQuantity: integer_("Largest. `0` is unbounded."),
-        quantityIncrement: integer_(
-          "The pack size: a quantity has to be a multiple of it. `0` and `1` both mean any number.",
-        ),
         wasteFactorPercent: percent(
           "How much more than the take-off measured has to be bought. Applied *before* the purchase " +
             "multiple is rounded to, so one adjustment is never compounded into the other.",
@@ -2517,18 +2325,10 @@ function schemas(): Record<string, Json> {
             "supplier will not break a pallet. `0` and `1` both mean any quantity.",
         ),
         material: ref("MaterialSpec"),
-        availableFrom: date_("The first day it may be quoted. Blank is “already”."),
-        availableTo: date_("The last day it may be quoted. Blank is “indefinitely”. Quoting outside the window warns rather than refuses."),
-        floorDiscountPercent: percent("The most a rep may discount this line before approval is needed."),
         optionGroups: array(ref("OptionGroup")),
         rules: array(ref("ProductRule")),
         components: array(ref("BundleComponent")),
         volumeTiers: array(ref("VolumeTier")),
-        attributes: {
-          type: "object",
-          description: "Arbitrary catalogue metadata, rendered on documents as a spec table.",
-          additionalProperties: { type: "string" },
-        },
       },
       ["sku", "name"],
     ),
@@ -2560,7 +2360,9 @@ function schemas(): Record<string, Json> {
         object("Stored fields.", {
           id: id("The product's id."),
           provenance: ref("CatalogProvenance"),
-          ...ownership,
+          ownerId: ownership.ownerId,
+          createdAt: ownership.createdAt,
+          updatedAt: ownership.updatedAt,
         }),
         ref("ProductInput"),
       ],
@@ -2579,30 +2381,6 @@ function schemas(): Record<string, Json> {
       },
     ),
 
-    PriceBookEntry: object("One product's price in one book.", {
-      sku: string_("The product's SKU, not its id: a book survives a catalogue re-import."),
-      unitPrice: money("The price in this book."),
-      minPrice: money("A hard floor — no discount, tier or rule may go below it. `null` for none."),
-      active: boolean_("Whether the entry applies."),
-    }),
-    PriceBookInput: object(
-      "A price book.",
-      {
-        name: string_("What it is called."),
-        description: string_("What it is for."),
-        currency: currency(),
-        isDefault: boolean_("The book a new quote starts on when the customer names none."),
-        active: boolean_("Whether it can be quoted from."),
-        validFrom: date_("Empty means no bound."),
-        validTo: date_("Empty means no bound. A quote outside the window is warned about."),
-        entries: array(ref("PriceBookEntry")),
-      },
-      ["name"],
-    ),
-    PriceBook: {
-      allOf: [object("Stored fields.", { id: id("The book's id."), ...ownership }), ref("PriceBookInput")],
-      description: "A price book: one price, and optionally one floor, per SKU.",
-    },
 
     CatalogTemplate: object("A file to start a catalogue from.", {
       file: string_("The file name it downloads as."),
@@ -2808,102 +2586,11 @@ function schemas(): Record<string, Json> {
       summary: ref("SyncRunSummary"),
     }),
 
-    /* -------------------------------- rules ------------------------------- */
-    PricingRuleInput: object(
-      "A pricing rule: what to change, when, and by how much.",
-      {
-        name: string_("What it is called."),
-        description: string_("What it is for."),
-        scope: enum_(["line", "quote"], "What it sees and what it can change."),
-        condition: string_("A formula that must be non-zero for it to fire. Empty means always."),
-        target: enum_(PRICING_RULE_TARGETS, "What it sets. A quote-scoped rule cannot set a unit price."),
-        expression: string_("The formula producing the new value."),
-        appliesToFamily: string_("Line scope only: limit it to one family. Empty is any."),
-        appliesToSku: string_("Line scope only: limit it to one SKU. Empty is any."),
-        priority: integer_("Lowest first. Each rule sees what the previous ones produced."),
-        active: boolean_("Whether it runs."),
-        message: string_("Shown on the line it changed, so a surprising price explains itself."),
-      },
-      ["name", "expression"],
-    ),
-    PricingRule: {
-      allOf: [
-        object("Stored fields.", {
-          id: id("The rule's id."),
-          ownerId: id("The account that owns it."),
-          createdAt: timestamp("When it was created."),
-          updatedAt: timestamp("When it last changed."),
-        }),
-        ref("PricingRuleInput"),
-      ],
-      description: "A pricing rule. The formula language is in `src/lib/formula.ts` — parsed, never `eval`ed.",
-    },
-
-    ApprovalRuleInput: object(
-      "An approval rule: what trips it, and who is asked.",
-      {
-        name: string_("What it is called."),
-        scope: enum_(["line", "quote"], "`quote` weighs the whole document; `line` fires on any single line."),
-        metric: enum_(APPROVAL_METRICS, "What is measured. `custom` runs the condition formula instead."),
-        comparator: enum_(COMPARATORS, "How the metric is compared to the threshold."),
-        threshold: number_("The number it is compared against."),
-        condition: string_("`custom` only: a formula that trips the rule when non-zero."),
-        level: integer_("Ascending. A quote needs every level at or below the highest it trips.", {
-          minimum: 1,
-          maximum: 20,
-        }),
-        approvers: array(string_("An approver's email.", { format: "email" })),
-        approvalsRequired: integer_("How many must approve. 1 is a rota; all of them is a board.", { minimum: 1 }),
-        rejectionsRequired: integer_("How many must reject before it comes back. Usually smaller.", { minimum: 1 }),
-        message: string_("What the submitter is told."),
-        active: boolean_("Whether it runs."),
-      },
-      ["name", "approvers"],
-    ),
-    ApprovalRule: {
-      allOf: [
-        object("Stored fields.", {
-          id: id("The rule's id."),
-          ownerId: id("The account that owns it."),
-          createdAt: timestamp("When it was created."),
-          updatedAt: timestamp("When it last changed."),
-        }),
-        ref("ApprovalRuleInput"),
-      ],
-      description: `An approval rule. At most ${MAX_APPROVERS} approvers, since one who cannot be stamped onto the quote cannot see it.`,
-    },
-
-    ApprovalDecision: object("One person's answer on one request.", {
-      approverEmail: string_("Who answered.", { format: "email" }),
-      decision: enum_(["approved", "rejected"], "What they said."),
-      decidedAt: timestamp("When."),
-      comment: string_("What they said about it."),
-    }),
-    ApprovalRequest: object(
-      "One approval a quote is waiting on, or has already had. Its `status` is derived from the " +
-        "decisions it carries against its two quorums — never assigned.",
-      {
-        id: id("The request's id."),
-        ruleId: id("The rule that raised it."),
-        ruleName: string_("That rule's name, snapshotted."),
-        level: integer_("Which rung of the ladder."),
-        approverEmails: array(string_("Everyone it is addressed to.", { format: "email" })),
-        approvalsRequired: integer_("How many yeses it needs."),
-        rejectionsRequired: integer_("How many noes send it back."),
-        reason: string_('Why it triggered, in numbers: "Discount 32.0% > 25%".'),
-        status: enum_(["pending", "approved", "rejected"], "Derived from the decisions below."),
-        lineId: string_("The line it fired on, for a line-scoped rule.", { nullable: true }),
-        decisions: array(ref("ApprovalDecision")),
-        requestedAt: timestamp("When it was raised."),
-      },
-    ),
-
     FormulaInput: object(
       "A formula to check.",
       {
         expression: string_("The formula."),
-        scope: enum_(["line", "quote", "product"], "Which set of variables it will see."),
-        optionKeys: array(string_("`product` scope: the option keys the formula may name.")),
+        optionKeys: array(string_("The item's option keys, which the formula may name as `option.<key>`.")),
       },
       ["expression"],
     ),
@@ -2915,12 +2602,12 @@ function schemas(): Record<string, Json> {
         object("It parsed.", {
           valid: { type: "boolean", enum: [true] },
           references: array(string_("Every variable the formula actually names.")),
-          available: array(string_("Every variable this scope offers.")),
+          available: array(string_("Every variable the formula may name.")),
         }),
         object("It did not.", {
           valid: { type: "boolean", enum: [false] },
           error: string_("What is wrong with it, in a sentence."),
-          available: array(string_("Every variable this scope offers.")),
+          available: array(string_("Every variable the formula may name.")),
         }),
       ],
     },
@@ -2929,14 +2616,6 @@ function schemas(): Record<string, Json> {
     CustomerSnapshot: customerSnapshot,
     QuoteLineInput: quoteLineInput,
     QuoteTotals: quoteTotals,
-    AppliedRule: object("What a rule did to one line or quote, kept so the UI can show its work.", {
-      ruleId: id("The rule."),
-      ruleName: string_("Its name."),
-      target: string_("What it changed."),
-      before: number_("The value before."),
-      after: number_("The value after."),
-      message: string_("What the rule says about itself."),
-    }),
     PricedLine: {
       allOf: [
         ref("QuoteLineInput"),
@@ -2944,23 +2623,22 @@ function schemas(): Record<string, Json> {
           sku: string_("The product's SKU, snapshotted."),
           name: string_("Its name, snapshotted."),
           family: string_("Its family."),
-          chargeType: enum_(CHARGE_TYPES, "How it bills."),
-          billingPeriod: enum_(BILLING_PERIODS, "Recurring lines only."),
           unitOfMeasure: string_("What a unit is."),
           optionNames: array(string_("The chosen options, by label.")),
-          listUnitPrice: money("Before anything was applied."),
-          unitPrice: money("After options, tiers, overrides and rules."),
-          lineTotal: money("What this line comes to."),
+          orderQuantity: number_("What has to be bought: the take-off plus waste, rounded up to the purchase multiple."),
+          listUnitPrice: money("The list price — or, for an item with none, its cost plus the quote's markup."),
+          pricedFromCost: boolean_("True when `listUnitPrice` was worked out from cost and markup."),
+          unitPrice: money("After options, tiers, overrides and the discount."),
+          netTotal: money("What this line comes to."),
           unitCost: money("Cost per unit. Never shown to a buyer."),
           margin: money("This line's margin."),
-          appliedRules: array(ref("AppliedRule")),
           issues: array(string_("Something that stops the quote.")),
           warnings: array(string_("Something worth knowing.")),
         }),
       ],
       description:
         "A line with its price worked out. Every intermediate number is kept, because the question " +
-        "a CPQ is always asked is why it is that price.",
+        "an estimate is always asked is why it is that price.",
     },
     QuoteInput: object(
       "A quote, as a caller writes it. Totals are ignored: the server prices it.",
@@ -2968,9 +2646,11 @@ function schemas(): Record<string, Json> {
         name: string_("What the quote is called."),
         accountId: string_("The customer. `null` for a quote addressed to nobody yet.", { nullable: true }),
         projectId: id("The job it is for. Empty for a bid with no job yet."),
-        priceBookId: string_("Which book to price from. Empty uses the default."),
-        currency: currency(),
-        termMonths: integer_("Default subscription length for recurring lines that name none."),
+        markupPercent: number_("Added to cost for an item with no list price. Left out: the settings' (new) or the quote's own (existing).", {
+          minimum: 0,
+          maximum: PREFERENCE_LIMITS.markupPercent.max,
+        }),
+        overheadPercent: percent("Charged on the discounted subtotal. Left out: the settings' (new) or the quote's own (existing)."),
         discountPercent: percent("A discount on the whole quote, applied after line discounts."),
         taxPercent: percent("The rate."),
         shipping: money("Shipping."),
@@ -2981,11 +2661,10 @@ function schemas(): Record<string, Json> {
       },
       ["name"],
     ),
-    Quote: object("A quote, priced.", { ...quoteHeader, lines: array(ref("PricedLine")), approvals: array(ref("ApprovalRequest")) }),
+    Quote: object("A quote, priced.", { ...quoteHeader, lines: array(ref("PricedLine")) }),
     QuoteSummary: object(
-      "A quote without its lines or its approval requests — what the list endpoints return. Every " +
-        "other field is the quote's own.",
-      { ...quoteHeader, lineCount: integer_("How many lines it has."), pendingApprovals: integer_("How many approvals it is still waiting on.") },
+      "A quote without its lines — what the list endpoints return. Every other field is the quote's own.",
+      { ...quoteHeader, lineCount: integer_("How many lines it has.") },
     ),
     QuotePage: object(
       "One page of a quote search.",
@@ -3010,33 +2689,14 @@ function schemas(): Record<string, Json> {
     QuotePreview: object("What a quote would come to, with nothing stored.", {
       lines: array(ref("PricedLine")),
       totals: ref("QuoteTotals"),
-      priceBookId: id("The book it was priced from."),
       issues: array(string_("Something that would stop it.")),
       warnings: array(string_("Something worth knowing.")),
-      approvalsRequired: array(ref("ApprovalRequest")),
-      autoApproved: boolean_("True where it trips no rule at all."),
     }),
-    SubmitResult: object("Where a quote stands after being submitted.", {
-      quote: ref("Quote"),
-      issues: array(string_("Something that stopped it.")),
-      warnings: array(string_("Something worth knowing.")),
-      required: array(ref("ApprovalRequest")),
-      unresolved: array(string_("An approver address that matches no account here, so nobody can answer it.")),
-    }),
-    DecisionInput: object(
-      "An approver's answer.",
-      {
-        decision: enum_(["approved", "rejected"], "Yes or no."),
-        comment: string_("Why. Shown to the submitter."),
-      },
-      ["decision"],
-    ),
     StatusInput: object("A lifecycle move.", { status: enum_(QUOTE_STATUSES, "Where to move it.") }, ["status"]),
 
     ConfigureInput: object("A selection to check against a product's option groups and rules.", {
       selectedOptions: array(string_("An option key.")),
-      quantity: number_("How many, for the quantity bounds and the tiers."),
-      termMonths: integer_("The term, for anything that depends on it."),
+      quantity: number_("How many, for the `validate` rules."),
     }),
     ConfigureResult: object("What the configurator makes of a selection.", {
       valid: boolean_("Whether it can be quoted."),
@@ -3278,13 +2938,12 @@ const TAGS: Json[] = [
     description:
       "The jobs. A project is what gets built, gets billed and gets argued about — and none of its money is stored.",
   },
-  { name: "Catalogue", description: "Products with their options and bundles, price books, and the catalogue file." },
+  { name: "Catalogue", description: "Products with their options and bundles, the formula language their rules use, and the catalogue file." },
   {
     name: "Supplier feeds",
     description: "Where a feed comes from, what it may change, and the plan a sync proposes before it writes.",
   },
-  { name: "Rules", description: "Pricing rules, the approval ladder, and the formula language behind both." },
-  { name: "Quotes", description: "Writing, pricing, approving and revising a quote — and billing it." },
+  { name: "Quotes", description: "Writing, pricing, sending and revising a quote — and billing it." },
   { name: "Receivables", description: "Invoices, the payments and credits against them, and the aging report." },
   { name: "Documents", description: "Templates, and rendering a quote or an invoice through one." },
   { name: "Sharing", description: "Letting another account read a record you own." },
@@ -3330,7 +2989,9 @@ const DESCRIPTION = [
   "",
   "**The server prices every quote and totals every invoice it stores.** Totals in a request body",
   "are ignored and overwritten. The pricing engine is pure and shared with the browser, so the",
-  "number you see live is the number that gets stored.",
+  "number you see live is the number that gets stored. An item with no list price sells at cost",
+  "plus the quote's markup, and overhead is charged on the discounted subtotal; both are copied",
+  "onto a quote from the account's settings when it is created.",
   "",
   "**An invoice's condition is never stored.** Only `state` (draft / issued / void) is recorded;",
   "open, part paid, paid and overdue are derived from the ledger and today's date on every read.",
@@ -3339,8 +3000,7 @@ const DESCRIPTION = [
   "### Access",
   "",
   "PocketBase's own collection rules decide what a credential reaches; this server holds none of",
-  "its own. A record shared with you is readable and quotable but not editable, and an approver",
-  "sees the quote a rule named them on and nothing else of that account's.",
+  "its own. A record shared with you is readable but not editable.",
 ].join("\n");
 
 /** `{id}` is what OpenAPI writes; `:id` is what the route table and `GET /api` write. */

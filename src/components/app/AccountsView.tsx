@@ -20,7 +20,6 @@ import {
   ACCOUNT_STATUS_LABELS,
   CONTACT_ROLES,
   CONTACT_ROLE_LABELS,
-  CURRENCIES,
   EMPTY_ADDRESS,
   EMPTY_CONTACT,
   primaryContact,
@@ -28,14 +27,12 @@ import {
   type AccountContact,
   type AccountStatus,
   type Address,
-  type PriceBook,
 } from "@/lib/types";
 import { localId, MAX_CONTACTS, MAX_TAGS, type AccountInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
 
 type Props = {
   accounts: Account[];
-  priceBooks: PriceBook[];
   preferences: Preferences;
   onChanged: () => Promise<void>;
   onError: (error: unknown) => void;
@@ -51,8 +48,7 @@ type Props = {
  * Customers.
  *
  * An account carries the facts that are true of the customer rather than of
- * any one quote — their currency, their price book, their tax position, their
- * payment terms, and everybody you deal with there — and a new quote starts
+ * any one quote — their tax position, their payment terms, and everybody you deal with there — and a new quote starts
  * from them. A quote then keeps its own copy, so changing an address here
  * never rewrites a document already sent.
  *
@@ -62,7 +58,6 @@ type Props = {
  */
 export function AccountsView({
   accounts: allAccounts,
-  priceBooks,
   preferences,
   onChanged,
   onError,
@@ -106,7 +101,6 @@ export function AccountsView({
   const editor = editing !== undefined && (
     <AccountEditor
       account={editing}
-      priceBooks={priceBooks}
       onSave={async input => {
         if (editing) await api.updateAccount(editing.id, input);
         else await api.createAccount(input);
@@ -126,7 +120,6 @@ export function AccountsView({
       <>
         <CustomerDetail
           account={open}
-          priceBooks={priceBooks}
           preferences={preferences}
           onBack={() => setOpenId(null)}
           onEdit={() => setEditing(open)}
@@ -237,7 +230,6 @@ export function AccountsView({
                         {account.name}
                       </RowLink>
                       <AccountStatusBadge status={account.status} />
-                      <Badge tone="outline">{account.currency}</Badge>
                       {account.taxExempt && <Badge tone="info">tax exempt</Badge>}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -335,7 +327,6 @@ const BLANK: AccountInput = {
   shippingAddress: { ...EMPTY_ADDRESS },
   shippingSameAsBilling: true,
   currency: "USD",
-  priceBookId: "",
   paymentTerms: "Net 30",
   paymentTermDays: 30,
   creditLimit: 0,
@@ -347,12 +338,10 @@ const BLANK: AccountInput = {
 
 function AccountEditor({
   account,
-  priceBooks,
   onSave,
   onClose,
 }: {
   account: Account | null;
-  priceBooks: PriceBook[];
   onSave: (input: AccountInput) => Promise<void>;
   onClose: () => void;
 }) {
@@ -593,42 +582,6 @@ function AccountEditor({
         </div>
 
         {/* ------------------------------ commercial --------------------- */}
-
-        <div className="grid gap-3 @md:grid-cols-2">
-          <Field label="Currency">
-            <Select value={draft.currency} onValueChange={value => patch({ currency: value as AccountInput["currency"] })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CURRENCIES.map(code => (
-                  <SelectItem key={code} value={code}>
-                    {code}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          <Field label="Price book" hint="New estimates for this client start here.">
-            <Select
-              value={draft.priceBookId || "default"}
-              onValueChange={value => patch({ priceBookId: value === "default" ? "" : value })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">The default book</SelectItem>
-                {priceBooks.map(book => (
-                  <SelectItem key={book.id} value={book.id}>
-                    {book.name} ({book.currency})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
 
         <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
           <Field label="Tax exempt">

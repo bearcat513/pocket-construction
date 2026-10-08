@@ -22,9 +22,6 @@ const line = (overrides: Partial<PricedLine> = {}): PricedLine =>
     unitPrice: 80,
     effectiveDiscountPercent: 20,
     netTotal: 9_600,
-    termMonths: 12,
-    chargeType: "recurring",
-    billingPeriod: "monthly",
     ...overrides,
   }) as PricedLine;
 
@@ -36,7 +33,6 @@ const quote = (overrides: Partial<Quote> = {}): Quote =>
     status: "sent",
     version: 1,
     currency: "USD",
-    termMonths: 12,
     validUntil: "2026-12-31",
     notes: "Thanks for your time.",
     createdAt: "2026-09-17T10:00:00.000Z",
@@ -73,7 +69,7 @@ const quote = (overrides: Partial<Quote> = {}): Quote =>
       lineDiscountAmount: 2_400,
       subtotal: 9_600,
       quoteDiscountAmount: 0,
-      quoteAdjustment: 0,
+      overheadAmount: 0,
       netTotal: 9_600,
       taxAmount: 0,
       shipping: 0,
@@ -82,10 +78,6 @@ const quote = (overrides: Partial<Quote> = {}): Quote =>
       costTotal: 3_600,
       margin: 6_000,
       marginPercent: 62.5,
-      oneTimeTotal: 0,
-      monthlyRecurringTotal: 800,
-      annualRecurringTotal: 9_600,
-      totalContractValue: 9_600,
     },
     ...overrides,
   }) as Quote;

@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { formatters } from "./common";
+import { sellPrice } from "@/lib/pricing";
 import type { CurrencyCode, Product } from "@/lib/types";
 
 type Props = {
   products: Product[];
-  /** The quote's currency, so a product it cannot be priced in is flagged. */
   currency: CurrencyCode;
   locale: string;
+  /** The quote's markup, which prices an item that has no list price. */
+  markupPercent: number;
   onPick: (product: Product) => void;
   onClose: () => void;
 };
@@ -24,7 +26,7 @@ type Props = {
  * products are left out entirely: they are in the catalogue for the quotes
  * that already reference them, not for new ones.
  */
-export function ProductPicker({ products, currency, locale, onPick, onClose }: Props) {
+export function ProductPicker({ products, currency, locale, markupPercent, onPick, onClose }: Props) {
   const [search, setSearch] = useState("");
   const format = formatters(currency, locale);
 
@@ -48,7 +50,7 @@ export function ProductPicker({ products, currency, locale, onPick, onClose }: P
   }, [products, search]);
 
   return (
-    <Sheet title="Add a product" onClose={onClose}>
+    <Sheet title="Add an item" onClose={onClose}>
       <div className="sticky -top-3 z-10 mb-3 bg-background pt-3 pb-1">
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -64,7 +66,7 @@ export function ProductPicker({ products, currency, locale, onPick, onClose }: P
 
       {groups.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-8 text-center text-xs text-muted-foreground">
-          {products.length ? "Nothing matches that." : "There are no products yet — add some to the catalogue first."}
+          {products.length ? "Nothing matches that." : "There are no items yet — add some to the catalogue first."}
         </p>
       ) : (
         <div className="space-y-4">
@@ -73,7 +75,7 @@ export function ProductPicker({ products, currency, locale, onPick, onClose }: P
               <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">{family}</p>
               <ul className="divide-y rounded-md border">
                 {entries.map(product => {
-                  const wrongCurrency = product.currency !== currency;
+                  const price = sellPrice(product, markupPercent, currency);
                   return (
                     <li key={product.id}>
                       <button
@@ -92,17 +94,16 @@ export function ProductPicker({ products, currency, locale, onPick, onClose }: P
                             <span className="font-mono text-xs text-muted-foreground">{product.sku}</span>
                             {product.optionGroups.length > 0 && <Badge tone="outline">configurable</Badge>}
                             {product.components.length > 0 && <Badge tone="info">bundle</Badge>}
-                            {wrongCurrency && <Badge tone="pending">{product.currency}</Badge>}
                           </span>
                           {product.description && (
                             <span className="line-clamp-1 text-xs text-muted-foreground">{product.description}</span>
                           )}
                         </span>
                         <span className="shrink-0 text-right text-sm tabular-nums">
-                          {format.money(product.listPrice, product.currency)}
+                          {format.money(price.price)}
                           <span className="block text-xs text-muted-foreground">
                             per {product.unitOfMeasure}
-                            {product.chargeType === "recurring" ? ` · ${product.billingPeriod}` : ""}
+                            {price.fromCost ? " · cost + markup" : ""}
                           </span>
                         </span>
                       </button>

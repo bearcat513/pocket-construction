@@ -45,7 +45,6 @@ import {
   SYNC_FIELD_LABELS,
   type CatalogSource,
   type CostType,
-  type CurrencyCode,
   type MatchKey,
   type Product,
   type SourceMapping,
@@ -265,7 +264,7 @@ function feedValue(row: SourceRow, field: SyncField, mapping: SourceMapping, pol
     if (!policy.markupPercent || !mapping.cost) return null;
     const cost = parseNumber(row[mapping.cost]);
     if (cost === null) return null;
-    return String(round(cost * (1 + policy.markupPercent / 100), policy.currency));
+    return String(round(cost * (1 + policy.markupPercent / 100)));
   }
 
   if (!column || !(column in row)) return null;
@@ -276,7 +275,7 @@ function feedValue(row: SourceRow, field: SyncField, mapping: SourceMapping, pol
     case "price": {
       const parsed = parseNumber(raw);
       // An unreadable price is not zero. Leave it alone and say so.
-      return parsed === null ? null : String(round(parsed, policy.currency));
+      return parsed === null ? null : String(round(parsed));
     }
     case "weightPerUnit":
     case "coverage": {
@@ -571,16 +570,10 @@ export function applyChange(
         description: existing.description,
         family: existing.family,
         costType: existing.costType,
-        chargeType: existing.chargeType,
-        billingPeriod: existing.billingPeriod,
         unitOfMeasure: existing.unitOfMeasure,
         listPrice: existing.listPrice,
         cost: existing.cost,
-        currency: existing.currency,
         active: existing.active,
-        minQuantity: existing.minQuantity,
-        maxQuantity: existing.maxQuantity,
-        floorDiscountPercent: existing.floorDiscountPercent,
         wasteFactorPercent: existing.wasteFactorPercent,
         purchaseMultiple: existing.purchaseMultiple,
         material: { ...existing.material },
@@ -589,7 +582,6 @@ export function applyChange(
         rules: existing.rules,
         components: existing.components,
         volumeTiers: existing.volumeTiers,
-        attributes: existing.attributes,
       }
     : {
         sku: change.sku,
@@ -597,16 +589,10 @@ export function applyChange(
         description: "",
         family: policy.defaultFamily,
         costType: policy.defaultCostType as CostType,
-        chargeType: "one-time",
-        billingPeriod: "monthly",
         unitOfMeasure: "EA",
         listPrice: 0,
         cost: 0,
-        currency: policy.currency as CurrencyCode,
         active: true,
-        minQuantity: 1,
-        maxQuantity: 0,
-        floorDiscountPercent: 0,
         wasteFactorPercent: 0,
         purchaseMultiple: 0,
         material: { ...EMPTY_MATERIAL },
@@ -615,7 +601,6 @@ export function applyChange(
         rules: [],
         components: [],
         volumeTiers: [],
-        attributes: {},
       };
 
   for (const change_ of change.changes) {

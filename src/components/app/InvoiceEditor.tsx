@@ -44,6 +44,7 @@ import {
 import { localId, type CreditInput, type PaymentInput } from "@/lib/validate";
 import { cn } from "@/lib/utils";
 import { useDirty, useFeedback, useUnsavedChanges } from "./feedback";
+import { DEFAULT_CURRENCY } from "@/lib/money";
 
 type Props = {
   /** null raises a new one; an id opens the one that exists. */
@@ -147,7 +148,7 @@ export function InvoiceEditor({
     JSON.stringify(baseline) !== JSON.stringify({ accountId, poNumber, notes, internalNotes, lines });
   const back = useUnsavedChanges(dirty, onBack);
 
-  const currency = invoice?.currency ?? accounts.find(one => one.id === accountId)?.currency ?? preferences.defaultCurrency;
+  const currency = invoice?.currency ?? accounts.find(one => one.id === accountId)?.currency ?? DEFAULT_CURRENCY;
   const format = formatters(currency, preferences.locale);
   const draft = !invoice || invoice.state === "draft";
   const issued = invoice?.state === "issued";

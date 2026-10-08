@@ -1,6 +1,5 @@
 /**
- * Sharing a product, price book, quote, invoice or proposal template with
- * another account.
+ * Sharing a quote, invoice or proposal template with another account.
  *
  * This lives in PocketBase rather than in the Bun server for two reasons.
  * Resolving an email address to an account needs to read the `users`
@@ -12,7 +11,7 @@
  * Read-only sharing: a recipient may list and view the record, and nothing
  * else. That is enforced by the collection rules, not here.
  */
-const SHAREABLE = ["products", "price_books", "quotes", "invoices", "proposal_templates"];
+const SHAREABLE = ["quotes", "invoices", "proposal_templates"];
 const MAX_SHARES = 50;
 
 /** Everything a caller may learn about one record's sharing. */
@@ -50,7 +49,7 @@ function load(e) {
   const collection = e.request.pathValue("collection");
   if (SHAREABLE.indexOf(collection) === -1) {
     throw new BadRequestError(
-      "Only products, price books, quotes, invoices and proposal templates can be shared.",
+      "Only quotes, invoices and proposal templates can be shared.",
     );
   }
 
@@ -63,8 +62,6 @@ function load(e) {
 
   const viewer = e.auth.id;
   const shared = (record.get("sharedWith") || []).indexOf(viewer) !== -1;
-  // An approver can read the quote, but the share list is not theirs to see:
-  // being asked to approve something is not the same as being given it.
   if (record.get("owner") !== viewer && !shared) throw new NotFoundError("Not found.");
 
   return record;

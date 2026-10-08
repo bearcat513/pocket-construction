@@ -4,17 +4,11 @@ import docs from "./docs.html";
 import { authRoutes, sessionUser } from "./server/auth";
 import {
   createAccount,
-  createApprovalRule,
-  createPriceBook,
-  createPricingRule,
   createProduct,
   createProposalTemplate,
   databaseMeta,
   databaseUrl,
   deleteAccount,
-  deleteApprovalRule,
-  deletePriceBook,
-  deletePricingRule,
   deleteProduct,
   deleteProposalTemplate,
   deleteQuote,
@@ -25,17 +19,11 @@ import {
   getAccount,
   getCatalogSource,
   getProject,
-  getApprovalRule,
-  getPriceBook,
-  getPricingRule,
   getProduct,
   getProposalTemplate,
   getInvoice,
   getQuote,
   listAccounts,
-  listApprovalRules,
-  listPriceBooks,
-  listPricingRules,
   listCatalogSources,
   listProducts,
   listProjects,
@@ -51,12 +39,8 @@ import {
   listInvoicesForProject,
   listQuotesForProject,
   listPayments,
-  listQuotesAwaiting,
   listQuotesForAccount,
   updateAccount,
-  updateApprovalRule,
-  updatePriceBook,
-  updatePricingRule,
   updateProduct,
   updateProposalTemplate,
 } from "./server/db";
@@ -76,13 +60,11 @@ import { readQuoteSearch } from "./lib/quoteSearch";
 import { readPreferences, writePreferences } from "./server/preferences";
 import {
   createPricedQuote,
-  decideQuote,
   loadCatalogue,
   repriceQuote,
   reviseQuote,
   saveQuote,
   snapshotCustomer,
-  submitQuote,
   transitionQuote,
   withExpiry,
 } from "./server/quotes";
@@ -158,10 +140,8 @@ import { parseCatalogCsv } from "./lib/catalogCsv";
 import { catalogFileName, parseCatalogFile, serializeCatalogFile } from "./lib/catalogFile";
 import { CATALOG_TEMPLATES, catalogTemplate, catalogTemplateUrl } from "./lib/catalogTemplates";
 import { defaultSelection, validateConfiguration } from "./lib/configurator";
-import { evaluateApprovals } from "./lib/approvals";
 import { FUNCTION_NAMES, parseFormula } from "./lib/formula";
 import { DEFAULT_PREFERENCES } from "./lib/preferences";
-import { PRICING_VARIABLES, lineVariableNames, quoteVariableNames } from "./lib/pricing";
 import { IMAGE_MEDIA_TYPES, MAX_IMAGE_BYTES } from "./lib/image";
 import {
   CONTENT_TYPES,
@@ -188,9 +168,6 @@ import { serializeWorkspaceFile, workspaceFileName } from "./lib/workspaceFile";
 import { projectStats } from "./lib/projects";
 import { inspectFeed, runSync, syncFromUrl, type SyncResult } from "./server/catalogSync";
 import {
-  APPROVAL_METRIC_LABELS,
-  BILLING_PERIODS,
-  CHARGE_TYPES,
   CURRENCIES,
   INVOICE_STATES,
   PAYMENT_METHODS,
@@ -209,14 +186,11 @@ import { asCurrency } from "./lib/money";
 import { today } from "./lib/receivable";
 import {
   readAccount,
-  readApprovalRule,
   readCredit,
   readInvoiceHeader,
   readInvoiceLines,
   readPayment,
   readPdfTemplate,
-  readPriceBook,
-  readPricingRule,
   readCatalogSource,
   readProduct,
   readProject,
@@ -270,9 +244,9 @@ function shareRoutes(kind: Shareable) {
 }
 
 /**
- * The five catalogue and policy collections share one shape: list, create,
- * read, replace, delete, with one validator each. Spelling them out five times
- * would be five chances for them to drift apart.
+ * The plain collections share one shape: list, create,
+ * read, replace, delete, with one validator each. Spelling each one out would
+ * be one more chance for them to drift apart.
  */
 function crudRoutes<T, Input>(config: {
   what: string;
@@ -377,36 +351,6 @@ const products = crudRoutes({
   create: createProduct,
   update: updateProduct,
   remove: deleteProduct,
-});
-
-const priceBooks = crudRoutes({
-  what: "Price book",
-  read: readPriceBook,
-  list: listPriceBooks,
-  get: getPriceBook,
-  create: createPriceBook,
-  update: updatePriceBook,
-  remove: deletePriceBook,
-});
-
-const pricingRules = crudRoutes({
-  what: "Pricing rule",
-  read: readPricingRule,
-  list: listPricingRules,
-  get: getPricingRule,
-  create: createPricingRule,
-  update: updatePricingRule,
-  remove: deletePricingRule,
-});
-
-const approvalRules = crudRoutes({
-  what: "Approval rule",
-  read: readApprovalRule,
-  list: listApprovalRules,
-  get: getApprovalRule,
-  create: createApprovalRule,
-  update: updateApprovalRule,
-  remove: deleteApprovalRule,
 });
 
 const accounts = crudRoutes({
@@ -549,30 +493,29 @@ const server = serve({
             what: "The server prices every quote it stores. Totals in a request body are ignored.",
             pipeline: [
               "the order quantity: the take-off, plus waste, rounded up to the sales lot",
-              "price book entry, or the item's list price",
+              "the item's list price — or, when it has none, its cost plus the quote's markup",
               "configured options: the factor, then the delta",
               "the volume tier the order quantity falls into",
               "a negotiated unit price override, which replaces the three above",
-              "pricing rules, by formula, in priority order",
-              "the discount — the estimator's, or one a rule set",
-              "the price book's floor, which nothing may go below",
-              "the term: periods = months ÷ billing period",
+              "the estimator's discount",
             ],
-            variables: PRICING_VARIABLES,
-            functions: FUNCTION_NAMES,
-            operators: "+ - * / % ^  < <= > >= == !=  && || !  and parentheses",
-          },
-          approvals: {
-            what: "A submitted quote is repriced, then measured against every active approval rule.",
-            metrics: APPROVAL_METRIC_LABELS,
-            ladder: "Levels are cumulative: a quote needs every level at or below the highest it trips.",
-            editing: "Editing a quote voids its approvals — they are recomputed from scratch on each submit.",
-            visibility: "An approver can read and decide the quote they are asked about, and nothing else of yours.",
+            quote:
+              "The lines' subtotal, less the quote discount, plus the quote's overhead on what is left, " +
+              "plus shipping, plus tax.",
+            settings:
+              "Markup, overhead and tax are the account's settings (PUT /api/preferences), copied onto a " +
+              "quote when it is created and then the quote's own — changing them does not reprice an " +
+              "estimate already sent.",
+            validation: {
+              what: "A catalogue item's `validate` rules are formulas over quantity, selectedCount and option.<key>.",
+              functions: FUNCTION_NAMES,
+              operators: "+ - * / % ^  < <= > >= == !=  && || !  and parentheses",
+            },
           },
           quotes: {
             statuses: QUOTE_STATUSES,
             transitions: QUOTE_TRANSITIONS,
-            editable: "draft and rejected. Anything else is revised, not edited.",
+            editable: "draft only. Anything else is revised, not edited.",
             expiry: "A sent quote past validUntil reads as expired without being rewritten.",
             numbering: "EST-<year>-<sequence> per account; a revision appends -r<version>.",
           },
@@ -595,11 +538,9 @@ const server = serve({
             paymentMethods: PAYMENT_METHODS,
             creditReasons: CREDIT_REASONS,
             aging: "Five buckets on the balance, not the total: not yet due, 1–30, 31–60, 61–90, 90+ days past due.",
-            currency: "Nothing adds two currencies. Invoices in another are counted and reported, never summed.",
             fromQuotes:
-              "A sent or accepted quote raises a draft invoice for its whole contract value, with the quote " +
-              "discount, any adjustment and shipping as their own lines. Billing a subscription period by " +
-              "period is a billing schedule, which this does not do.",
+              "A sent or accepted quote raises a draft invoice for its whole value, with the quote " +
+              "discount, the overhead and shipping as their own lines.",
           },
           documents: {
             what: "A quote or an invoice rendered through a template — HTML, Markdown, plain text or PDF.",
@@ -641,11 +582,10 @@ const server = serve({
           },
           sharing: {
             what: `${SHAREABLE_KINDS.join(", ")} can be shared with other accounts, read-only.`,
-            recipientCan: "List, read, export it, and quote from it. The quotes they build are their own.",
+            recipientCan: "List, read and export it.",
             recipientCannot: "Rename, edit, delete, or re-share it.",
-            accounts: "Customers and rules are never shared — a quote carries its customer's details itself.",
+            accounts: "Customers and catalogue items are never shared — a quote carries its customer's details itself.",
           },
-          currencies: CURRENCIES,
         }),
       ),
     },
@@ -681,7 +621,7 @@ const server = serve({
     /**
      * The accounts on this instance: id, email and name, and nothing else.
      *
-     * What the approver and share pickers offer. PocketBase answers it, since
+     * What the share and project pickers offer. PocketBase answers it, since
      * reading the user list needs authority no user token has — and it is the
      * only way to see another account at all. See docker/pb_hooks/lib/directory.js.
      */
@@ -696,14 +636,9 @@ const server = serve({
     "/api/reference": {
       GET: guarded(() =>
         Response.json({
-          currencies: CURRENCIES,
-          chargeTypes: CHARGE_TYPES,
-          billingPeriods: BILLING_PERIODS,
           productRuleKinds: PRODUCT_RULE_KINDS,
           quoteStatuses: QUOTE_STATUSES,
           quoteTransitions: QUOTE_TRANSITIONS,
-          approvalMetrics: APPROVAL_METRIC_LABELS,
-          pricingVariables: PRICING_VARIABLES,
           formulaFunctions: FUNCTION_NAMES,
           templateKinds: TEMPLATE_KINDS,
           proposalTokens: PROPOSAL_TOKENS,
@@ -802,21 +737,17 @@ const server = serve({
     /* ------------------------------ formulas ----------------------------- */
 
     /**
-     * Checks an expression against the variables its scope actually offers,
-     * which is what the rule editors call on every keystroke.
+     * Checks a catalogue item's validation formula against the variables it
+     * can see: the line's quantity, how many options are chosen, and each of
+     * the item's options as `option.<key>`.
      */
     "/api/formula/validate": {
       POST: guarded(async (_token, req) => {
         const raw = await body(req);
         if (typeof raw.expression !== "string") throw new ApiError('"expression" must be a string.');
 
-        const scope = String(raw.scope ?? "line");
-        const available =
-          scope === "quote"
-            ? quoteVariableNames()
-            : scope === "product"
-              ? ["quantity", "term", "termMonths", "selectedCount", ...(Array.isArray(raw.optionKeys) ? raw.optionKeys.map(key => `option.${String(key)}`) : [])]
-              : lineVariableNames();
+        const optionKeys = Array.isArray(raw.optionKeys) ? raw.optionKeys.map(key => `option.${String(key)}`) : [];
+        const available = ["quantity", "selectedCount", ...optionKeys];
 
         const result = parseFormula(raw.expression, available);
         return Response.json(
@@ -1000,7 +931,6 @@ const server = serve({
     },
 
     "/api/products/:id": products.record,
-    "/api/products/:id/shares": shareRoutes("products"),
 
     /**
      * Checks a set of chosen options against the product's rules, and says
@@ -1017,48 +947,19 @@ const server = serve({
           ? raw.selectedOptions.map(String)
           : defaultSelection(product);
 
-        const result = validateConfiguration(
-          product,
-          {
-            selectedOptions,
-            quantity: Number(raw.quantity) || product.minQuantity || 1,
-            termMonths: Number(raw.termMonths) || 0,
-          },
-          product.currency,
-        );
+        const result = validateConfiguration(product, { selectedOptions, quantity: Number(raw.quantity) || 1 });
 
         return Response.json({ ...result, defaults: defaultSelection(product) });
       }),
     },
 
-    "/api/price-books": priceBooks.collection,
-    "/api/price-books/:id": priceBooks.record,
-    "/api/price-books/:id/shares": shareRoutes("price-books"),
-
-    "/api/pricing-rules": pricingRules.collection,
-    "/api/pricing-rules/:id": pricingRules.record,
-
-    "/api/approval-rules": approvalRules.collection,
-    "/api/approval-rules/:id": approvalRules.record,
-
     /* ------------------------- catalogue as a file ----------------------- */
 
     "/api/catalog/export": {
       GET: guarded(async token => {
-        const [productList, books, pricing, approvals] = await Promise.all([
-          listProducts(token),
-          listPriceBooks(token),
-          listPricingRules(token),
-          listApprovalRules(token),
-        ]);
+        const productList = await listProducts(token);
         return fileResponse(
-          serializeCatalogFile({
-            name: "Catalogue",
-            products: productList,
-            priceBooks: books,
-            pricingRules: pricing,
-            approvalRules: approvals,
-          }),
+          serializeCatalogFile({ name: "Catalogue", products: productList }),
           "application/json; charset=utf-8",
           catalogFileName("catalog"),
         );
@@ -1123,37 +1024,6 @@ const server = serve({
           bump("products");
         }
 
-        const takenBook = new Set((await listPriceBooks(token)).map(book => book.name.toLowerCase()));
-        for (const book of parsed.catalog.priceBooks) {
-          if (takenBook.has(book.name.toLowerCase())) {
-            skipped.push(`price book "${book.name}"`);
-            continue;
-          }
-          await createPriceBook(token, book);
-          takenBook.add(book.name.toLowerCase());
-          bump("priceBooks");
-        }
-
-        const takenPricing = new Set((await listPricingRules(token)).map(rule => rule.name.toLowerCase()));
-        for (const rule of parsed.catalog.pricingRules) {
-          if (takenPricing.has(rule.name.toLowerCase())) {
-            skipped.push(`pricing rule "${rule.name}"`);
-            continue;
-          }
-          await createPricingRule(token, rule);
-          bump("pricingRules");
-        }
-
-        const takenApproval = new Set((await listApprovalRules(token)).map(rule => rule.name.toLowerCase()));
-        for (const rule of parsed.catalog.approvalRules) {
-          if (takenApproval.has(rule.name.toLowerCase())) {
-            skipped.push(`approval rule "${rule.name}"`);
-            continue;
-          }
-          await createApprovalRule(token, rule);
-          bump("approvalRules");
-        }
-
         return Response.json({ created, skipped, warnings: parsed.catalog.warnings }, { status: 201 });
       }),
     },
@@ -1167,8 +1037,7 @@ const server = serve({
       }),
       POST: guarded(async (token, req) => {
         const { header, lines } = await readQuoteBody(req);
-        const preferences = await readPreferences(token);
-        const result = await createPricedQuote(token, header, lines, preferences.quoteValidDays);
+        const result = await createPricedQuote(token, header, lines, await readPreferences(token));
         return Response.json(result, { status: 201 });
       }),
     },
@@ -1185,15 +1054,6 @@ const server = serve({
       }),
     },
 
-    /** The approvals queue: quotes submitted to this account by someone else. */
-    "/api/quotes/awaiting": {
-      GET: guarded(async (token, req) => {
-        const me = await sessionUser(req);
-        if (!me) return fail("Sign in to continue.", 401);
-        return Response.json(await listQuotesAwaiting(token, me.id));
-      }),
-    },
-
     /**
      * Prices a quote without storing it.
      *
@@ -1204,16 +1064,21 @@ const server = serve({
     "/api/quotes/preview": {
       POST: guarded(async (token, req) => {
         const { header, lines } = await readQuoteBody(req);
-        const [catalogue, rules, approvalRuleList, account] = await Promise.all([
+        const [catalogue, account, preferences] = await Promise.all([
           loadCatalogue(token),
-          listPricingRules(token),
-          listApprovalRules(token),
           header.accountId ? getAccount(token, header.accountId) : Promise.resolve(null),
+          readPreferences(token),
         ]);
 
         const priced = repriceQuote(
           {
-            header,
+            // A body that names no markup or overhead is priced the way a new
+            // quote would be: under the settings.
+            header: {
+              ...header,
+              markupPercent: header.markupPercent ?? preferences.markupPercent,
+              overheadPercent: header.overheadPercent ?? preferences.overheadPercent,
+            },
             lines,
             number: "(preview)",
             status: "draft",
@@ -1224,35 +1089,15 @@ const server = serve({
             projectId: header.projectId,
             projectName: "",
             customer: snapshotCustomer(account),
-            approvals: [],
-            approverIds: [],
           },
           catalogue,
-          rules,
-        );
-
-        const floorByLineId = new Map(
-          priced.record.lines.map(line => [line.id, catalogue.byId.get(line.productId)?.floorDiscountPercent ?? 0]),
-        );
-
-        const outcome = evaluateApprovals(
-          {
-            totals: priced.record.totals,
-            lines: priced.record.lines,
-            termMonths: priced.record.termMonths,
-            floorByLineId,
-          },
-          approvalRuleList,
         );
 
         return Response.json({
           lines: priced.record.lines,
           totals: priced.record.totals,
-          priceBookId: priced.record.priceBookId,
           issues: priced.issues,
           warnings: priced.warnings,
-          approvalsRequired: outcome.required,
-          autoApproved: outcome.autoApproved,
         });
       }),
     },
@@ -1286,29 +1131,6 @@ const server = serve({
       POST: guarded<{ params: { id: string } }>(async (token, req) =>
         Response.json(await invoiceQuote(token, req.params.id), { status: 201 }),
       ),
-    },
-
-    "/api/quotes/:id/submit": {
-      POST: guarded<{ params: { id: string } }>(async (token, req) =>
-        Response.json(await submitQuote(token, req.params.id)),
-      ),
-    },
-
-    "/api/quotes/:id/decision": {
-      POST: guarded<{ params: { id: string } }>(async (token, req) => {
-        const me = await sessionUser(req);
-        if (!me) return fail("Sign in to continue.", 401);
-
-        const raw = await body(req);
-        const decision = String(raw.decision ?? "");
-        if (decision !== "approved" && decision !== "rejected") {
-          throw new ApiError('"decision" must be "approved" or "rejected".');
-        }
-
-        return Response.json(
-          await decideQuote(token, req.params.id, me.email, decision, String(raw.comment ?? "").slice(0, 2_000)),
-        );
-      }),
     },
 
     "/api/quotes/:id/status": {
@@ -1639,7 +1461,7 @@ const server = serve({
     /* --------------------------- workspace, sample ----------------------- */
 
     /**
-     * Everything this account has, as one file: the catalogue, the policy, the
+     * Everything this account has, as one file: the catalogue, the
      * customers, the proposal templates and the quotes — its own and the ones
      * shared with it, which are marked as such.
      */
@@ -1648,12 +1470,9 @@ const server = serve({
         const me = await sessionUser(req);
         if (!me) return fail("Sign in to continue.", 401);
 
-        const [productList, books, pricing, approvals, accountList, templates, quoteList, invoiceList] =
+        const [productList, accountList, templates, quoteList, invoiceList] =
           await Promise.all([
             listProducts(token),
-            listPriceBooks(token),
-            listPricingRules(token),
-            listApprovalRules(token),
             listAccounts(token),
             listProposalTemplates(token),
             listQuotes(token, 0),
@@ -1673,9 +1492,6 @@ const server = serve({
             ownerId: me.id,
             email: me.email,
             products: productList,
-            priceBooks: books,
-            pricingRules: pricing,
-            approvalRules: approvals,
             accounts: accountList,
             templates,
             quotes: quotes.filter((quote): quote is NonNullable<typeof quote> => quote !== null),
@@ -1692,8 +1508,7 @@ const server = serve({
       POST: guarded(async (token, req) => {
         const me = await sessionUser(req);
         if (!me) return fail("Sign in to continue.", 401);
-        const preferences = await readPreferences(token);
-        return Response.json(await installSample(token, me.email, preferences.quoteValidDays), { status: 201 });
+        return Response.json(await installSample(token, me.email, await readPreferences(token)), { status: 201 });
       }),
     },
 

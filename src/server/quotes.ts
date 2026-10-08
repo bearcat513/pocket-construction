@@ -2,11 +2,10 @@
  * Quotes: the part of the server that actually decides things.
  *
  * Everything a quote *says* is derived here, never accepted from a client.
- * A request sends what the rep chose — products, quantities, options,
- * discounts — and this module loads the catalogue, prices it, runs the
- * approval rules over the result and stores what came out. A browser that
- * posts its own totals, or its own "no approvals needed", changes nothing: the
- * numbers are recomputed and overwritten every single time.
+ * A request sends what the estimator chose — products, quantities, options,
+ * discounts — and this module loads the catalogue, prices it and stores what
+ * came out. A browser that posts its own totals changes nothing: the numbers
+ * are recomputed and overwritten every single time.
  *
  * That is the whole reason the pricing engine is pure and lives in
  * `src/lib/`. The client runs it for instant feedback, this runs it for the
@@ -16,39 +15,32 @@
  * Access control is still PocketBase's. Nothing here selects by owner; the
  * collection rules do, evaluated against the caller's own token.
  */
-import { allApproved, anyRejected, applyDecision, currentApprovers, evaluateApprovals } from "../lib/approvals";
 import { priceQuote, type PriceableLine } from "../lib/pricing";
+import type { Preferences } from "../lib/preferences";
 import {
   emptyCustomer,
   isEditableStatus,
   primaryContact,
   QUOTE_TRANSITIONS,
   type Account,
-  type ApprovalRequest,
   type CustomerSnapshot,
-  type PriceBook,
   type Product,
   type Quote,
   type QuoteStatus,
 } from "../lib/types";
 import type { QuoteHeaderInput } from "../lib/validate";
-import { asCurrency } from "../lib/money";
+import { DEFAULT_CURRENCY } from "../lib/money";
 import {
   createQuote,
   getAccount,
   getProject,
-  getPriceBook,
   getQuote,
-  listApprovalRules,
-  listPriceBooks,
-  listPricingRules,
   listProducts,
   nextQuoteNumber,
   updateQuote,
   type QuoteRecordInput,
 } from "./db";
 import { ApiError } from "./http";
-import { stampApprovers } from "./share";
 
 /* ------------------------------ the catalogue ---------------------------- */
 
@@ -56,7 +48,6 @@ export type Catalogue = {
   products: Product[];
   byId: Map<string, Product>;
   bySku: Map<string, Product>;
-  priceBooks: PriceBook[];
 };
 
 /**
@@ -67,27 +58,12 @@ export type Catalogue = {
  * them would be answering the same question.
  */
 export async function loadCatalogue(token: string): Promise<Catalogue> {
-  const [products, priceBooks] = await Promise.all([listProducts(token), listPriceBooks(token)]);
+  const products = await listProducts(token);
   return {
     products,
     byId: new Map(products.map(product => [product.id, product])),
     bySku: new Map(products.map(product => [product.sku, product])),
-    priceBooks,
   };
-}
-
-/** The price book a quote should use, given what it asked for. */
-export function resolvePriceBook(books: PriceBook[], requestedId: string, currency: string): PriceBook | null {
-  if (requestedId) {
-    const requested = books.find(book => book.id === requestedId);
-    if (requested) return requested;
-  }
-  // Fall back to the default book for the right currency, then to any default.
-  return (
-    books.find(book => book.isDefault && book.active && book.currency === currency) ??
-    books.find(book => book.isDefault && book.active) ??
-    null
-  );
 }
 
 /* ------------------------------- the customer ---------------------------- */
@@ -127,7 +103,8 @@ export type RepricedQuote = {
 };
 
 type RepriceInput = {
-  header: QuoteHeaderInput;
+  /** Markup and overhead resolved — see `resolveRates`. */
+  header: QuoteHeaderInput & { markupPercent: number; overheadPercent: number };
   lines: PriceableLine[];
   existing?: Quote | null;
   number: string;
@@ -137,8 +114,6 @@ type RepriceInput = {
   projectId: string;
   projectName: string;
   customer: CustomerSnapshot;
-  approvals: ApprovalRequest[];
-  approverIds: string[];
   sentAt?: string;
   decidedAt?: string;
 };
@@ -147,20 +122,20 @@ type RepriceInput = {
  * Prices a quote and returns the record to store. Pure once the catalogue is
  * in hand, which is what makes it safe to call on every save.
  */
-export function repriceQuote(input: RepriceInput, catalogue: Catalogue, rules: Awaited<ReturnType<typeof listPricingRules>>): RepricedQuote {
-  const currency = asCurrency(input.header.currency);
-  const priceBook = resolvePriceBook(catalogue.priceBooks, input.header.priceBookId, currency);
+export function repriceQuote(input: RepriceInput, catalogue: Catalogue): RepricedQuote {
+  const currency = DEFAULT_CURRENCY;
 
   const priced = priceQuote(
     input.lines,
     {
       currency,
-      termMonths: input.header.termMonths,
+      markupPercent: input.header.markupPercent,
+      overheadPercent: input.header.overheadPercent,
       discountPercent: input.header.discountPercent,
       taxPercent: input.header.taxPercent,
       shipping: input.header.shipping,
     },
-    { products: catalogue.byId, priceBook, rules },
+    { products: catalogue.byId },
   );
 
   return {
@@ -173,9 +148,9 @@ export function repriceQuote(input: RepriceInput, catalogue: Catalogue, rules: A
       projectId: input.projectId,
       projectName: input.projectName,
       customer: input.customer,
-      priceBookId: priceBook?.id ?? "",
       currency,
-      termMonths: input.header.termMonths,
+      markupPercent: input.header.markupPercent,
+      overheadPercent: input.header.overheadPercent,
       discountPercent: input.header.discountPercent,
       taxPercent: input.header.taxPercent,
       shipping: input.header.shipping,
@@ -184,8 +159,6 @@ export function repriceQuote(input: RepriceInput, catalogue: Catalogue, rules: A
       internalNotes: input.header.internalNotes,
       lines: priced.lines,
       totals: priced.totals,
-      approvals: input.approvals,
-      approverIds: input.approverIds,
       ...(input.sentAt !== undefined ? { sentAt: input.sentAt } : {}),
       ...(input.decidedAt !== undefined ? { decidedAt: input.decidedAt } : {}),
     },
@@ -218,6 +191,23 @@ export function withExpiry<T extends { status: QuoteStatus; validUntil: string }
 
 export type CreateQuoteResult = { quote: Quote; issues: string[]; warnings: string[] };
 
+/** What a new quote starts from: the account's settings. */
+export type QuoteDefaults = Pick<Preferences, "quoteValidDays" | "markupPercent" | "overheadPercent">;
+
+/**
+ * A header with its markup and overhead decided: what the body said, or —
+ * when it said nothing — `fallback`, which is the settings for a new quote and
+ * the quote's own numbers for an existing one.
+ */
+const resolveRates = (
+  header: QuoteHeaderInput,
+  fallback: { markupPercent: number; overheadPercent: number },
+): QuoteHeaderInput & { markupPercent: number; overheadPercent: number } => ({
+  ...header,
+  markupPercent: header.markupPercent ?? fallback.markupPercent,
+  overheadPercent: header.overheadPercent ?? fallback.overheadPercent,
+});
+
 /**
  * Creates a quote.
  *
@@ -230,11 +220,10 @@ export async function createPricedQuote(
   token: string,
   header: QuoteHeaderInput,
   lines: PriceableLine[],
-  validDays: number,
+  defaults: QuoteDefaults,
 ): Promise<CreateQuoteResult> {
-  const [catalogue, rules, account, project] = await Promise.all([
+  const [catalogue, account, project] = await Promise.all([
     loadCatalogue(token),
-    listPricingRules(token),
     header.accountId ? getAccount(token, header.accountId) : Promise.resolve(null),
     header.projectId ? getProject(token, header.projectId) : Promise.resolve(null),
   ]);
@@ -242,14 +231,16 @@ export async function createPricedQuote(
   if (header.accountId && !account) throw new ApiError("That account does not exist, or is not yours.", 404);
   if (header.projectId && !project) throw new ApiError("That project does not exist, or is not yours.", 404);
 
-  const resolved: QuoteHeaderInput = {
-    ...header,
-    validUntil: header.validUntil || defaultValidUntil(validDays),
-    // The account's own tax and discount are the starting point, since they
-    // are facts about the customer rather than about this quote.
-    taxPercent: account?.taxExempt ? 0 : (header.taxPercent || account?.taxPercent) ?? header.taxPercent,
-    priceBookId: header.priceBookId || account?.priceBookId || "",
-  };
+  const resolved = resolveRates(
+    {
+      ...header,
+      validUntil: header.validUntil || defaultValidUntil(defaults.quoteValidDays),
+      // The account's own tax and discount are the starting point, since they
+      // are facts about the customer rather than about this quote.
+      taxPercent: account?.taxExempt ? 0 : (header.taxPercent || account?.taxPercent) ?? header.taxPercent,
+    },
+    defaults,
+  );
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const number = await nextQuoteNumber(token, attempt);
@@ -266,13 +257,10 @@ export async function createPricedQuote(
         // renamed job does not rewrite the documents already sent under it.
         projectName: project ? `${project.number} — ${project.name}` : "",
         customer: snapshotCustomer(account),
-        approvals: [],
-        approverIds: [],
         sentAt: "",
         decidedAt: "",
       },
       catalogue,
-      rules,
     );
 
     try {
@@ -292,11 +280,10 @@ export async function createPricedQuote(
 /**
  * Saves an edit.
  *
- * Only a quote that is still the rep's to edit — draft, or one an approver
- * sent back — can be written to. A quote in review is being looked at by
- * somebody, and a sent quote is a document that exists in someone else's inbox
- * with a number on it; changing either underneath its readers is how a CPQ
- * stops being trustworthy. `revise` is the supported way forward from there.
+ * Only a draft can be written to. A sent quote is a document that exists in
+ * someone else's inbox with a number on it; changing it underneath its reader
+ * is how an estimate stops being trustworthy. `revise` is the supported way
+ * forward from there.
  */
 export async function saveQuote(
   token: string,
@@ -315,9 +302,8 @@ export async function saveQuote(
     );
   }
 
-  const [catalogue, rules, account, project] = await Promise.all([
+  const [catalogue, account, project] = await Promise.all([
     loadCatalogue(token),
-    listPricingRules(token),
     header.accountId ? getAccount(token, header.accountId) : Promise.resolve(null),
     header.projectId && header.projectId !== existing.projectId
       ? getProject(token, header.projectId)
@@ -340,11 +326,9 @@ export async function saveQuote(
 
   const priced = repriceQuote(
     {
-      header,
+      header: resolveRates(header, existing),
       lines,
       number: existing.number,
-      // Editing a rejected quote puts it back in the rep's hands, and drops
-      // the decisions that were made about numbers that no longer apply.
       status: "draft",
       version: existing.version,
       supersedesId: existing.supersedesId,
@@ -353,175 +337,25 @@ export async function saveQuote(
       // keeps the name the job had when it was written.
       projectName: project ? `${project.number} — ${project.name}` : header.projectId ? existing.projectName : "",
       customer,
-      approvals: [],
-      approverIds: [],
     },
     catalogue,
-    rules,
   );
 
   const quote = await updateQuote(token, id, priced.record);
   if (!quote) throw new ApiError("Quote not found, or not yours to change.", 404);
 
-  // The approver list goes with the approvals that are no longer there.
-  await stampApprovers(token, id, []).catch(() => undefined);
-
   return { quote, issues: priced.issues, warnings: priced.warnings };
-}
-
-/* ------------------------------- approvals ------------------------------- */
-
-export type SubmitResult = {
-  quote: Quote;
-  /** Approvals the quote now needs. Empty when it was cleared outright. */
-  required: ApprovalRequest[];
-  /** Approvers whose address does not match an account here. */
-  unresolved: string[];
-  issues: string[];
-  warnings: string[];
-};
-
-/**
- * Submits a quote for approval.
- *
- * The quote is repriced first, against the catalogue as it stands now — the
- * thing being approved has to be the thing that will be sent, and a quote
- * priced a week ago against products that have since changed is neither.
- *
- * A quote that trips no rule is approved outright rather than sitting in a
- * queue nobody needs to look at.
- */
-export async function submitQuote(token: string, id: string): Promise<SubmitResult> {
-  const existing = await getQuote(token, id);
-  if (!existing) throw new ApiError("Quote not found.", 404);
-  if (!isEditableStatus(existing.status)) {
-    throw new ApiError(`A quote that is ${existing.status.replace("_", " ")} cannot be submitted again.`, 409);
-  }
-  if (!existing.lines.length) throw new ApiError("Add at least one line before submitting this quote.", 400);
-
-  const [catalogue, pricing, approvalRules] = await Promise.all([
-    loadCatalogue(token),
-    listPricingRules(token),
-    listApprovalRules(token),
-  ]);
-
-  const priced = repriceQuote(
-    {
-      header: headerOf(existing),
-      lines: existing.lines,
-      number: existing.number,
-      status: "draft",
-      version: existing.version,
-      supersedesId: existing.supersedesId,
-      projectId: existing.projectId,
-      projectName: existing.projectName,
-      customer: existing.customer,
-      approvals: [],
-      approverIds: [],
-    },
-    catalogue,
-    pricing,
-  );
-
-  // A quote that will not price is not a quote anyone can approve.
-  if (priced.issues.length) {
-    throw new ApiError(`This quote has problems that must be fixed first: ${priced.issues[0]}`, 409);
-  }
-
-  // Each line's product ceiling, which the `floorBreach` metric needs.
-  const floorByLineId = new Map(
-    priced.record.lines.map(line => [line.id, catalogue.byId.get(line.productId)?.floorDiscountPercent ?? 0]),
-  );
-
-  const outcome = evaluateApprovals(
-    { totals: priced.record.totals, lines: priced.record.lines, termMonths: priced.record.termMonths, floorByLineId },
-    approvalRules,
-  );
-
-  const record: QuoteRecordInput = {
-    ...priced.record,
-    status: outcome.autoApproved ? "approved" : "in_review",
-    approvals: outcome.required,
-    approverIds: [],
-  };
-
-  const saved = await updateQuote(token, id, record);
-  if (!saved) throw new ApiError("Quote not found, or not yours to submit.", 404);
-
-  // Resolving an address to an account needs to read the user list, which no
-  // user token may do — so PocketBase does it, the same way sharing does.
-  const stamped = outcome.required.length
-    ? await stampApprovers(token, id, currentApprovers(outcome.required))
-    : await stampApprovers(token, id, []).catch(() => ({ resolved: [], unresolved: [] }));
-
-  return {
-    quote: { ...saved, approverIds: stamped.resolved },
-    required: outcome.required,
-    unresolved: stamped.unresolved,
-    issues: priced.issues,
-    warnings: priced.warnings,
-  };
-}
-
-/**
- * Records an approver's decision.
- *
- * The caller must be one of the people the quote is currently waiting on —
- * which PocketBase enforces, not this function: the update rule lets an
- * approver write a quote, and a hook restricts them to the approval fields.
- * This decides *what* changes; PocketBase decides whether they may.
- */
-export async function decideQuote(
-  token: string,
-  id: string,
-  approverEmail: string,
-  decision: "approved" | "rejected",
-  comment: string,
-): Promise<{ quote: Quote; changed: number }> {
-  const existing = await getQuote(token, id);
-  if (!existing) throw new ApiError("Quote not found.", 404);
-  if (existing.status !== "in_review") {
-    throw new ApiError(`This quote is ${existing.status.replace("_", " ")}, so there is nothing to decide.`, 409);
-  }
-
-  const { approvals, changed } = applyDecision(existing.approvals, approverEmail, decision, comment);
-  if (!changed) {
-    throw new ApiError("There is no approval on this quote waiting for you right now.", 403);
-  }
-
-  const status: QuoteStatus = anyRejected(approvals) ? "rejected" : allApproved(approvals) ? "approved" : "in_review";
-
-  const record: QuoteRecordInput = {
-    ...recordOf(existing),
-    status,
-    approvals,
-    // Whoever is next in the ladder; nobody, once it is settled.
-    approverIds: existing.approverIds,
-    decidedAt: status === "in_review" ? "" : new Date().toISOString(),
-  };
-
-  const saved = await updateQuote(token, id, record);
-  if (!saved) throw new ApiError("Quote not found, or not yours to decide.", 404);
-
-  // The next rung of the ladder, stamped by the owner's own hook route. An
-  // approver cannot change the relation themselves, so this is best-effort:
-  // when it fails the owner's next submit or save puts it right.
-  const next = currentApprovers(approvals);
-  const stamped = await stampApprovers(token, id, next).catch(() => null);
-
-  return { quote: { ...saved, approverIds: stamped?.resolved ?? saved.approverIds }, changed };
 }
 
 /* ------------------------------ transitions ------------------------------ */
 
 /** The header fields, pulled back out of a stored quote. */
-const headerOf = (quote: Quote): QuoteHeaderInput => ({
+const headerOf = (quote: Quote): QuoteHeaderInput & { markupPercent: number; overheadPercent: number } => ({
   name: quote.name,
   accountId: quote.customer.accountId,
   projectId: quote.projectId,
-  priceBookId: quote.priceBookId,
-  currency: quote.currency,
-  termMonths: quote.termMonths,
+  markupPercent: quote.markupPercent,
+  overheadPercent: quote.overheadPercent,
   discountPercent: quote.discountPercent,
   taxPercent: quote.taxPercent,
   shipping: quote.shipping,
@@ -540,9 +374,9 @@ const recordOf = (quote: Quote): QuoteRecordInput => ({
   projectId: quote.projectId,
   projectName: quote.projectName,
   customer: quote.customer,
-  priceBookId: quote.priceBookId,
   currency: quote.currency,
-  termMonths: quote.termMonths,
+  markupPercent: quote.markupPercent,
+  overheadPercent: quote.overheadPercent,
   discountPercent: quote.discountPercent,
   taxPercent: quote.taxPercent,
   shipping: quote.shipping,
@@ -551,8 +385,6 @@ const recordOf = (quote: Quote): QuoteRecordInput => ({
   internalNotes: quote.internalNotes,
   lines: quote.lines,
   totals: quote.totals,
-  approvals: quote.approvals,
-  approverIds: quote.approverIds,
 });
 
 /**
@@ -560,8 +392,8 @@ const recordOf = (quote: Quote): QuoteRecordInput => ({
  *
  * The legal moves are in `QUOTE_TRANSITIONS`, shared with the UI so the
  * buttons on screen and the transitions the server will accept are the same
- * list. Two of them carry an extra condition, checked here because they are
- * the ones with consequences outside the app.
+ * list. Sending carries an extra condition, checked here because it is the
+ * one with consequences outside the app.
  */
 export async function transitionQuote(token: string, id: string, to: QuoteStatus): Promise<Quote> {
   const existing = await getQuote(token, id);
@@ -579,42 +411,22 @@ export async function transitionQuote(token: string, id: string, to: QuoteStatus
   }
 
   if (to === "sent") {
-    // Sending is the point of no return, so the approvals have to be real.
-    const pending = existing.approvals.filter(request => request.status === "pending");
-    if (pending.length) {
-      throw new ApiError(
-        `This quote is waiting on ${pending.length} approval${pending.length === 1 ? "" : "s"}.`,
-        409,
-      );
-    }
-    if (from === "draft") {
-      const rules = (await listApprovalRules(token)).filter(
-      rule => rule.active && rule.approvers.some(email => email.trim()),
-    );
-      if (rules.length) {
-        throw new ApiError(
-          "Submit this quote for approval before sending it — there are approval rules that have not been run against it.",
-          409,
-        );
-      }
-    }
     if (!existing.lines.length) throw new ApiError("There is nothing on this quote to send.", 400);
+    // A line the catalogue can no longer price, or a configuration it would
+    // refuse, is not something to put in front of a client.
+    const problem = existing.lines.flatMap(line => line.issues ?? [])[0];
+    if (problem) throw new ApiError(`This quote has problems that must be fixed first: ${problem}`, 409);
   }
 
   const record: QuoteRecordInput = {
     ...recordOf(existing),
     status: to,
-    // Reopening starts the approval story over rather than carrying decisions
-    // forward onto numbers that are about to change.
-    ...(to === "draft" ? { approvals: [], approverIds: [] } : {}),
     ...(to === "sent" ? { sentAt: new Date().toISOString() } : {}),
     ...(to === "accepted" || to === "declined" ? { decidedAt: new Date().toISOString() } : {}),
   };
 
   const saved = await updateQuote(token, id, record);
   if (!saved) throw new ApiError("Quote not found, or not yours to change.", 404);
-
-  if (to === "draft") await stampApprovers(token, id, []).catch(() => undefined);
 
   return saved;
 }
@@ -623,7 +435,7 @@ export async function transitionQuote(token: string, id: string, to: QuoteStatus
  * Creates the next revision of a quote.
  *
  * A new record rather than an edit: the quote that was sent stays exactly as
- * it was sent, with its own number and its own approvals, and the new one says
+ * it was sent, with its own number, and the new one says
  * what it supersedes. That is what makes "which version did they sign" a
  * question with an answer.
  */
@@ -631,7 +443,7 @@ export async function reviseQuote(token: string, id: string): Promise<CreateQuot
   const existing = await getQuote(token, id);
   if (!existing) throw new ApiError("Quote not found.", 404);
 
-  const [catalogue, rules] = await Promise.all([loadCatalogue(token), listPricingRules(token)]);
+  const catalogue = await loadCatalogue(token);
 
   const priced = repriceQuote(
     {
@@ -647,18 +459,12 @@ export async function reviseQuote(token: string, id: string): Promise<CreateQuot
       projectId: existing.projectId,
       projectName: existing.projectName,
       customer: existing.customer,
-      approvals: [],
-      approverIds: [],
       sentAt: "",
       decidedAt: "",
     },
     catalogue,
-    rules,
   );
 
   const quote = await createQuote(token, priced.record);
   return { quote, issues: priced.issues, warnings: priced.warnings };
 }
-
-/** Re-exported for the route table, which reports them alongside a save. */
-export { currentApprovers };

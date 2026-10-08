@@ -1,5 +1,5 @@
 /**
- * The two things this server cannot do on its own, relayed to PocketBase.
+ * The things this server cannot do on its own, relayed to PocketBase.
  *
  * Both need to turn an email address into an account, which means reading the
  * `users` collection — something no user token may do, and something this
@@ -8,21 +8,14 @@
  * the caller's own token along, so PocketBase still decides whether they own
  * the record they are talking about.
  *
- *   sharing    — who else may read a product, price book, quote, invoice or template
- *   approvers  — which accounts a submitted quote is waiting on
- *
- * The second one exists for the same reason as the first, and has the same
- * shape: the Bun server works out *which* addresses matter (by pricing the
- * quote and running the approval rules), and PocketBase resolves them and
- * writes the relation the rules are evaluated against.
+ *   sharing    — who else may read a quote, invoice, project, feed or template
+ *   directory  — the accounts on this instance, for the pickers that name one
  */
 import { ApiError } from "./http";
 import { authHeaders, POCKETBASE_URL, toApiError } from "./pocketbase";
 
 /** Collection names as PocketBase knows them, keyed by API path segment. */
 const COLLECTIONS = {
-  products: "products",
-  "price-books": "price_books",
   quotes: "quotes",
   invoices: "invoices",
   projects: "projects",
@@ -87,30 +80,6 @@ export const addShare = (token: string, kind: Shareable, id: string, email: stri
 
 export const removeShare = (token: string, kind: Shareable, id: string, email: string) =>
   relay<Shares>(token, sharePath(kind, id, `?email=${encodeURIComponent(email)}`), { method: "DELETE" });
-
-/* ------------------------------- approvers ------------------------------- */
-
-export type StampedApprovers = {
-  /** Account ids for the addresses that resolved — what the quote now lists. */
-  resolved: string[];
-  /** Addresses with no account here. The rule is real; the approver is not. */
-  unresolved: string[];
-};
-
-/**
- * Sets which accounts a quote is waiting on.
- *
- * Only the owner may call it, which PocketBase checks. An address with no
- * account is reported rather than refused: an approval rule naming someone who
- * has not signed up yet is a configuration problem worth surfacing on the
- * quote, not a reason to refuse to submit it.
- */
-export const stampApprovers = (token: string, quoteId: string, emails: string[]) =>
-  relay<StampedApprovers>(token, `/api/build/approvers/${encodeURIComponent(quoteId)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ emails }),
-  });
 
 /* ------------------------------- directory ------------------------------- */
 

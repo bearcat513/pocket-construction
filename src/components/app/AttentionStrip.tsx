@@ -1,8 +1,8 @@
 /**
  * What needs somebody today, across the top of the projects screen.
  *
- * Three questions a contractor opens the app with — who owes me past their
- * date, what is waiting on my say-so, and which bids are about to lapse — each
+ * Two questions a contractor opens the app with — who owes me past their
+ * date, and which bids are about to lapse — each
  * answered with a number that links to the list behind it. Every figure is
  * derived from records the app already reads, the same way the receivables
  * screen derives them; nothing here is stored.
@@ -11,7 +11,7 @@
  * in `src/lib/receivable.ts`.
  */
 import { useEffect, useState, type MouseEvent } from "react";
-import { AlarmClock, Receipt, ShieldCheck } from "lucide-react";
+import { AlarmClock, Receipt } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Preferences } from "@/lib/preferences";
 import { invoiceStatus, today } from "@/lib/receivable";
@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
 import { formatters } from "./common";
 
 type Props = {
-  awaiting: number;
   preferences: Preferences;
   linkTo: (route: Route) => { href: string; onClick: (event: MouseEvent) => void };
 };
@@ -40,7 +39,7 @@ const addDays = (date: string, days: number) => {
   return next.toISOString().slice(0, 10);
 };
 
-export function AttentionStrip({ awaiting, preferences, linkTo }: Props) {
+export function AttentionStrip({ preferences, linkTo }: Props) {
   const [facts, setFacts] = useState<Facts | null>(null);
 
   useEffect(() => {
@@ -76,13 +75,13 @@ export function AttentionStrip({ awaiting, preferences, linkTo }: Props) {
   }, []);
 
   if (!facts) return null;
-  if (!facts.overdue.count && !awaiting && !facts.expiring) return null;
+  if (!facts.overdue.count && !facts.expiring) return null;
 
   const money = (currency: CurrencyCode, value: number) =>
     formatters(currency, preferences.locale).money(value);
 
   return (
-    <div className="grid gap-2 sm:grid-cols-3" role="region" aria-label="Needs attention">
+    <div className="grid gap-2 sm:grid-cols-2" role="region" aria-label="Needs attention">
       <Tile
         {...linkTo({ view: "receivables" })}
         Icon={Receipt}
@@ -94,14 +93,6 @@ export function AttentionStrip({ awaiting, preferences, linkTo }: Props) {
             : "Nothing"
         }
         label={facts.overdue.count === 1 ? "1 invoice overdue" : `${facts.overdue.count} invoices overdue`}
-      />
-      <Tile
-        {...linkTo({ view: "approvals" })}
-        Icon={ShieldCheck}
-        tone="hazard"
-        live={awaiting > 0}
-        figure={String(awaiting)}
-        label={awaiting === 1 ? "estimate waiting on your approval" : "estimates waiting on your approval"}
       />
       <Tile
         {...linkTo({ view: "quotes" })}
