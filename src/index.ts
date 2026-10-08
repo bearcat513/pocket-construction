@@ -131,6 +131,8 @@ import {
   addShare,
   listDirectory,
   listShares,
+  listStaff,
+  setStaff,
   removeShare,
   SHAREABLE_KINDS,
   readEmail,
@@ -630,6 +632,23 @@ const server = serve({
     },
 
     /**
+     * Who keeps the company catalogue. Both halves are staff only, and
+     * changing it takes a real sign-in rather than an API key — PocketBase
+     * decides both, in docker/pb_hooks/lib/staff.js.
+     */
+    "/api/staff": {
+      GET: guarded(async token => Response.json(await listStaff(token))),
+    },
+
+    "/api/staff/:id": {
+      PUT: guarded<{ params: { id: string } }>(async (_token, req) => {
+        const raw = await body(req);
+        if (typeof raw.staff !== "boolean") throw new ApiError('"staff" must be true or false.');
+        return Response.json(await setStaff(requireSessionToken(req), req.params.id, raw.staff));
+      }),
+    },
+
+    /**
      * Every enum and vocabulary the UI builds its pickers from, in one place,
      * so the options on screen cannot drift from the ones the server accepts.
      */
@@ -833,7 +852,6 @@ const server = serve({
 
     "/api/catalog-sources": catalogSources.collection,
     "/api/catalog-sources/:id": catalogSources.record,
-    "/api/catalog-sources/:id/shares": shareRoutes("catalog-sources"),
 
     /**
      * What columns a feed actually has, so a mapping can be written against
@@ -1508,7 +1526,9 @@ const server = serve({
       POST: guarded(async (token, req) => {
         const me = await sessionUser(req);
         if (!me) return fail("Sign in to continue.", 401);
-        return Response.json(await installSample(token, me.email, await readPreferences(token)), { status: 201 });
+        return Response.json(await installSample(token, me.email, await readPreferences(token), me.staff), {
+          status: 201,
+        });
       }),
     },
 

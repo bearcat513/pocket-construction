@@ -437,3 +437,47 @@ describe("reopening quotes the approval ladder was holding", () => {
     ]);
   });
 });
+
+/* --------------------------- who starts as staff (1750000015) ------------------------- */
+
+/**
+ * The accounts trusted with the company catalogue on the day it becomes one.
+ *
+ * The first account and the website's editors — nobody else. An account that
+ * merely registered must not be swept onto staff by the migration, because
+ * sign-up is open and the catalogue is the company's prices.
+ */
+describe("the first members of staff", () => {
+  const STAFF_MIGRATION = "docker/pb_migrations/1750000015_staff.js";
+
+  const usersTable = (rows: [string, string, number][]): Database => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE users (id TEXT PRIMARY KEY, created TEXT, siteEditor INTEGER, staff INTEGER DEFAULT 0)");
+    for (const [id, created, siteEditor] of rows) {
+      db.run("INSERT INTO users (id, created, siteEditor) VALUES (?, ?, ?)", [id, created, siteEditor]);
+    }
+    return db;
+  };
+
+  const staff = (db: Database) =>
+    (db.query("SELECT id FROM users WHERE staff = 1 ORDER BY id").all() as { id: string }[]).map(row => row.id);
+
+  test("the first account and every site editor, and nobody who merely signed up", async () => {
+    const db = usersTable([
+      ["b_second", "2026-02-01 00:00:00.000Z", 0],
+      ["a_first", "2026-01-01 00:00:00.000Z", 0],
+      ["c_editor", "2026-03-01 00:00:00.000Z", 1],
+      ["d_stranger", "2026-04-01 00:00:00.000Z", 0],
+    ]);
+
+    db.run(await statement("BACKFILL_STAFF", STAFF_MIGRATION));
+
+    expect(staff(db)).toEqual(["a_first", "c_editor"]);
+  });
+
+  test("an instance with no accounts yet is left as it is", async () => {
+    const db = usersTable([]);
+    db.run(await statement("BACKFILL_STAFF", STAFF_MIGRATION));
+    expect(staff(db)).toEqual([]);
+  });
+});

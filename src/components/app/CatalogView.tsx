@@ -8,7 +8,6 @@ import {
   Plus,
   RefreshCw,
   Rss,
-  Share2,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -23,7 +22,7 @@ import { CatalogSourceEditor } from "./CatalogSourceEditor";
 import { CatalogTemplatesDialog } from "./CatalogTemplatesDialog";
 import { ProductEditor } from "./ProductEditor";
 import { SyncPlanDialog } from "./SyncPlanDialog";
-import { api, type Shareable, type SyncResult } from "@/lib/api";
+import { api, type SyncResult } from "@/lib/api";
 import type { Preferences } from "@/lib/preferences";
 import { sellPrice } from "@/lib/pricing";
 import { DEFAULT_CURRENCY } from "@/lib/money";
@@ -44,9 +43,9 @@ type Props = {
   products: Product[];
   catalogSources: CatalogSource[];
   preferences: Preferences;
-  myId: string;
+  /** Whether this account keeps the company catalogue. Nobody else sees it. */
+  staff: boolean;
   onChanged: () => Promise<void>;
-  onShare: (kind: Shareable, id: string, title: string) => void;
   onError: (error: unknown) => void;
   onNotice: (lines: string[]) => void;
 };
@@ -84,9 +83,12 @@ function materialValue(product: Product, key: MaterialSort, markupPercent: numbe
  * Two things on one screen because they are maintained together — an item
  * needs a cost and a price, and a supplier feed is how they stop being a year
  * out of date.
+ *
+ * It is the company's one catalogue, kept by its staff. An account that is
+ * not staff is told so rather than shown an empty list it cannot fill.
  */
 export function CatalogView(props: Props) {
-  const { preferences, myId } = props;
+  const { preferences } = props;
   const { pending, removeWithUndo } = useFeedback();
   // Anything waiting out its undo window is already gone as far as the screen is concerned.
   const products = useMemo(() => props.products.filter(entry => !pending.has(entry.id)), [props.products, pending]);
@@ -214,6 +216,17 @@ export function CatalogView(props: Props) {
       props.onError(error);
     }
   };
+
+  if (!props.staff) {
+    return (
+      <Section title="Materials and costs">
+        <EmptyState title="The catalogue is kept by staff">
+          You are not on staff yet, so you cannot see or change the company's catalogue. Ask someone who is to add you
+          under Settings → Team.
+        </EmptyState>
+      </Section>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -443,7 +456,6 @@ export function CatalogView(props: Props) {
             </Thead>
             <Tbody>
               {catalogSources.map(source => {
-                const mine = source.ownerId === myId;
                 const run = source.lastRun;
 
                 return (
@@ -454,7 +466,6 @@ export function CatalogView(props: Props) {
                         <span className="font-medium">{source.name}</span>
                         <Badge tone="outline">{source.format.toUpperCase()}</Badge>
                         {!source.active && <Badge tone="neutral">off</Badge>}
-                        {!mine && <Badge tone="info">shared with you</Badge>}
                       </div>
                       <p className="line-clamp-1 text-xs text-muted-foreground">
                         {source.url || "Fed by uploaded file"}
@@ -538,26 +549,14 @@ export function CatalogView(props: Props) {
                         >
                           <Pencil />
                         </Button>
-                        {mine && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => props.onShare("catalog-sources", source.id, source.name)}
-                              aria-label={`Share ${source.name}`}
-                            >
-                              <Share2 />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => void removeSource(source)}
-                              aria-label={`Delete ${source.name}`}
-                            >
-                              <Trash2 className="text-muted-foreground hover:text-destructive" />
-                            </Button>
-                          </>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void removeSource(source)}
+                          aria-label={`Delete ${source.name}`}
+                        >
+                          <Trash2 className="text-muted-foreground hover:text-destructive" />
+                        </Button>
                       </div>
                     </Td>
                   </Tr>

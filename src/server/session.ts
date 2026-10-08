@@ -46,6 +46,8 @@ export type SessionUser = {
   createdAt: string;
   /** May change the public website. Granted, never claimed — see rules/site.js. */
   siteEditor: boolean;
+  /** Keeps the company catalogue. Granted by other staff — see lib/staff.js. */
+  staff: boolean;
   /**
    * Carried on the session so the app has them on its first paint, rather
    * than rendering a default theme and then correcting itself.
@@ -61,6 +63,7 @@ export function toSessionUser(record: Record<string, unknown> | undefined | null
     verified: record?.verified === true,
     createdAt: String(record?.created ?? ""),
     siteEditor: record?.siteEditor === true,
+    staff: record?.staff === true,
     // An account made before the preferences field existed has none; the
     // normalizer answers with the defaults rather than with undefined.
     preferences: normalizePreferences(record?.preferences),

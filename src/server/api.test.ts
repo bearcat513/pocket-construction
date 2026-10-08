@@ -77,6 +77,19 @@ async function register(email: string): Promise<string> {
   return (response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 }
 
+/** The account id behind a session. */
+const idOf = async (session: string): Promise<string> => (await json("/api/auth/me", { cookie: session })).user.id;
+
+/**
+ * Registers an account and has Alice — the first account, so staff — put it on
+ * staff, which is what it takes to see or change the company catalogue.
+ */
+async function staffAccount(email: string): Promise<string> {
+  const session = await register(email);
+  await put(`/api/staff/${await idOf(session)}`, { staff: true });
+  return session;
+}
+
 /* -------------------------------- fixtures ------------------------------- */
 
 const PLATFORM = {
@@ -943,6 +956,86 @@ async function bobToken(): Promise<string> {
   return (await response.json()).token;
 }
 
+/* ---------------------------------- staff -------------------------------- */
+
+describe("staff keep the company catalogue", () => {
+  signedIn("the first account is staff, and somebody who just signed up is not", async () => {
+    expect((await json("/api/auth/me")).user.staff).toBe(true);
+    expect((await json("/api/auth/me", { cookie: bobCookie })).user.staff).toBe(false);
+  });
+
+  signedIn("somebody who is not staff sees no catalogue and cannot add to it", async () => {
+    expect(await json("/api/products", { cookie: bobCookie })).toEqual([]);
+    expect(await json("/api/catalog-sources", { cookie: bobCookie })).toEqual([]);
+    const response = await api("/api/products", {
+      method: "POST",
+      body: JSON.stringify({ sku: "BOBS-OWN", name: "Bob's item", unitOfMeasure: "EA", listPrice: 1 }),
+      cookie: bobCookie,
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+
+  signedIn("nor can they see who is staff, or make themselves so", async () => {
+    expect((await api("/api/staff", { cookie: bobCookie })).status).toBe(403);
+    const bobId = await idOf(bobCookie);
+    expect((await api(`/api/staff/${bobId}`, { method: "PUT", body: JSON.stringify({ staff: true }), cookie: bobCookie })).status).toBe(403);
+
+    // Nor by writing the flag onto their own record in PocketBase directly.
+    await fetch(`${pocketbase.url}/api/collections/users/records/${bobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: await bobToken() },
+      body: JSON.stringify({ staff: true }),
+    });
+    expect((await json("/api/auth/me", { cookie: bobCookie })).user.staff).toBe(false);
+  });
+
+  signedIn("staff put somebody on staff, and they see the same catalogue", async () => {
+    const team = await json("/api/staff");
+    expect(team.users.find((user: any) => user.email === ALICE).staff).toBe(true);
+
+    const bobId = await idOf(bobCookie);
+    const made = await put(`/api/staff/${bobId}`, { staff: true });
+    expect(made.staff).toBe(true);
+
+    // One catalogue: Bob sees the item Alice created, and may change it.
+    const seen = await json(`/api/products/${platformId}`, { cookie: bobCookie });
+    expect(seen.sku).toBe("PLAT");
+    const edited = await put(`/api/products/${platformId}`, { ...PLATFORM, description: "Edited by Bob" }, { cookie: bobCookie });
+    expect(edited.description).toBe("Edited by Bob");
+    // It is still Alice's record; owner is who created it, not who may edit it.
+    expect(edited.ownerId).toBe(await idOf(cookie));
+
+    // And off again.
+    expect((await put(`/api/staff/${bobId}`, { staff: false })).staff).toBe(false);
+    expect(await json("/api/products", { cookie: bobCookie })).toEqual([]);
+  });
+
+  signedIn("nobody can take themselves off staff", async () => {
+    const response = await api(`/api/staff/${await idOf(cookie)}`, { method: "PUT", body: JSON.stringify({ staff: false }) });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("yourself");
+    expect((await json("/api/auth/me")).user.staff).toBe(true);
+  });
+
+  signedIn("an API key cannot make anybody staff", async () => {
+    const issued = await post("/api/keys", { name: "staff test" });
+    const response = await fetch(`${BASE}/api/staff/${await idOf(bobCookie)}`, {
+      method: "PUT",
+      headers: { "X-API-Key": String(issued.key), "Content-Type": "application/json" },
+      body: JSON.stringify({ staff: true }),
+    });
+    expect(response.status).toBe(403);
+    expect((await json("/api/auth/me", { cookie: bobCookie })).user.staff).toBe(false);
+    await api(`/api/keys/${issued.id}`, { method: "DELETE" });
+  });
+
+  signedIn("a SKU is one item across the company, whoever created it", async () => {
+    const carl = await staffAccount(`carl-${suffix}@example.com`);
+    const response = await api("/api/products", { method: "POST", body: JSON.stringify(PLATFORM), cookie: carl });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
 /* --------------------------------- sharing ------------------------------- */
 
 describe("sharing", () => {
@@ -1225,10 +1318,15 @@ describe("what comes out", () => {
     const reimport = await post("/api/catalog/import", file);
     expect(reimport.skipped).toContain("product PLAT");
 
-    // Into a fresh account it imports whole.
+    // Somebody who is not staff cannot add to the company catalogue at all.
     const carol = await register(`carol-${suffix}@example.com`);
-    const fresh = await post("/api/catalog/import", file, { cookie: carol });
-    expect(fresh.created.products).toBeGreaterThan(0);
+    const refused = await api("/api/catalog/import", { method: "POST", body: JSON.stringify(file), cookie: carol });
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+
+    // And once they are, it is the same catalogue: nothing new to import.
+    await put(`/api/staff/${await idOf(carol)}`, { staff: true });
+    const again = await post("/api/catalog/import", file, { cookie: carol });
+    expect(again.skipped).toContain("product PLAT");
     expect((await json("/api/products", { cookie: carol })).map((p: any) => p.sku)).toContain("PLAT");
   });
 
@@ -1322,7 +1420,7 @@ describe("preferences", () => {
 
 describe("the worked example", () => {
   signedIn("installs into a fresh account, and is idempotent", async () => {
-    const dave = await register(`dave-${suffix}@example.com`);
+    const dave = await staffAccount(`dave-${suffix}@example.com`);
 
     const first = await post("/api/sample", {}, { cookie: dave });
     expect(first.created.products).toBe(SAMPLE_PRODUCTS.length);
@@ -1420,7 +1518,7 @@ describe("projects", () => {
   });
 
   signedIn("an estimate attaches to a job, and its summary adds the job up", async () => {
-    const owner = await register(`pm4-${suffix}@example.com`);
+    const owner = await staffAccount(`pm4-${suffix}@example.com`);
     await post("/api/sample", {}, { cookie: owner });
 
     const projects = await json("/api/projects", { cookie: owner });
@@ -1469,10 +1567,23 @@ describe("catalogue sources", () => {
     "GYP-TX58-412,999.00,Keystone Gypsum",
   ].join("\n");
 
-  /** A workspace with the sample catalogue and one source mapped onto it. */
+  /**
+   * A member of staff, the sample catalogue, and one source mapped onto it.
+   *
+   * The catalogue is the company's, so an earlier test's sync has already
+   * moved the two items this feed touches — they are put back to the sample's
+   * own numbers first, so every test starts from the same catalogue.
+   */
   async function workspace(label: string, policy: Record<string, unknown> = {}) {
-    const session = await register(`feed-${label}-${suffix}@example.com`);
+    const session = await staffAccount(`feed-${label}-${suffix}@example.com`);
     await post("/api/sample", {}, { cookie: session });
+
+    const products = await json("/api/products", { cookie: session });
+    for (const sku of ["LBR-STUD-2X4", "DRY-5812-4X12"]) {
+      const stored = products.find((one: any) => one.sku === sku);
+      const original = SAMPLE_PRODUCTS.find(one => one.sku === sku);
+      await put(`/api/products/${stored.id}`, original, { cookie: session });
+    }
 
     const source = await post(
       "/api/catalog-sources",
@@ -1606,7 +1717,7 @@ describe("catalogue sources", () => {
   signedIn("a source that is allowed to create items does", async () => {
     // No sample catalogue here: an empty workspace is the honest test of
     // creation, and it keeps the two halves of this rule independent.
-    const session = await register(`feed-create-${suffix}@example.com`);
+    const session = await staffAccount(`feed-create-${suffix}@example.com`);
     const source = await post(
       "/api/catalog-sources",
       {
@@ -1650,7 +1761,7 @@ describe("catalogue sources", () => {
     expect(response.status).toBe(409);
   });
 
-  signedIn("a source is not visible to somebody else's account", async () => {
+  signedIn("a source is not visible to an account that is not staff", async () => {
     const { source } = await workspace("private");
     const stranger = await register(`feed-stranger-${suffix}@example.com`);
 

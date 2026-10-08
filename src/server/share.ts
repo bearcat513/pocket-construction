@@ -8,8 +8,9 @@
  * the caller's own token along, so PocketBase still decides whether they own
  * the record they are talking about.
  *
- *   sharing    — who else may read a quote, invoice, project, feed or template
+ *   sharing    — who else may read a quote, invoice, project or template
  *   directory  — the accounts on this instance, for the pickers that name one
+ *   staff      — who keeps the company catalogue, and making somebody so
  */
 import { ApiError } from "./http";
 import { authHeaders, POCKETBASE_URL, toApiError } from "./pocketbase";
@@ -19,7 +20,6 @@ const COLLECTIONS = {
   quotes: "quotes",
   invoices: "invoices",
   projects: "projects",
-  "catalog-sources": "catalog_sources",
   "proposal-templates": "proposal_templates",
 } as const;
 
@@ -106,3 +106,22 @@ export function readEmail(value: unknown): string {
   if (!email.includes("@")) throw new ApiError("A valid email address is required.");
   return email;
 }
+
+/* --------------------------------- staff --------------------------------- */
+
+export type StaffMember = DirectoryUser & { staff: boolean };
+
+/** Every account and whether it is staff. Staff only — PocketBase checks. */
+export const listStaff = (token: string) =>
+  relay<{ users: StaffMember[]; truncated: boolean }>(token, "/api/build/staff");
+
+/**
+ * Puts an account on staff or takes it off. Staff only, a real sign-in only,
+ * and never yourself off — all three checked by docker/pb_hooks/lib/staff.js.
+ */
+export const setStaff = (token: string, id: string, staff: boolean) =>
+  relay<StaffMember>(token, `/api/build/staff/${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ staff }),
+  });

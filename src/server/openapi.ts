@@ -339,6 +339,38 @@ export const OPERATIONS: Operation[] = [
     parameters: [queryParam("search", "Narrow the list by name or email.", { type: "string" })],
     responses: { "200": jsonResponse("The directory.", ref("Directory")) },
   },
+  {
+    method: "get",
+    path: "/api/staff",
+    tag: "Discovery",
+    operationId: "listStaff",
+    summary: "Every account, and whether it is staff (staff only)",
+    description:
+      "Staff keep the company catalogue: items and supplier feeds are visible to them and to nobody " +
+      "else. Sign-up is open, so this is how somebody who registered becomes somebody who works here.",
+    responses: {
+      "200": jsonResponse("The accounts.", ref("StaffList")),
+      "403": jsonResponse("You are not staff.", ref("Error")),
+    },
+  },
+  {
+    method: "put",
+    path: "/api/staff/{id}",
+    tag: "Discovery",
+    operationId: "setStaff",
+    summary: "{ staff } → put an account on staff, or take it off (staff only, signed in)",
+    description:
+      "Takes a real sign-in — an API key is refused, so a leaked key cannot make anyone staff. Nobody " +
+      "can take themselves off, which keeps at least one person able to put others back.",
+    parameters: [idParam("account")],
+    requestBody: jsonBody("Whether they are staff.", ref("StaffInput")),
+    responses: {
+      "200": jsonResponse("The account, as it now stands.", ref("StaffMember")),
+      "400": jsonResponse("Taking yourself off, or a body without `staff`.", ref("Error")),
+      "403": jsonResponse("You are not staff, or this is an API key.", ref("Error")),
+      "404": responseRef("NotFound"),
+    },
+  },
 
   /* -------------------------------- auth -------------------------------- */
   {
@@ -1391,7 +1423,6 @@ export const OPERATIONS: Operation[] = [
 
   /* ------------------------------- sharing ------------------------------ */
   ...shareOperations("projects", "a project", "project"),
-  ...shareOperations("catalog-sources", "a supplier feed", "catalogSource"),
   ...shareOperations("quotes", "a quote", "quote"),
   ...shareOperations("invoices", "an invoice", "invoice"),
   ...shareOperations("proposal-templates", "a template", "template"),
@@ -2089,6 +2120,17 @@ function schemas(): Record<string, Json> {
       ),
       truncated: boolean_("Whether the list was cut short — narrow it with `?search=`."),
     }),
+    StaffMember: object("One account, as the team list sees it.", {
+      id: id("Their account id."),
+      email: string_("Their email.", { format: "email" }),
+      name: string_("Their name, where they gave one."),
+      staff: boolean_("Whether they keep the company catalogue."),
+    }),
+    StaffList: object("Every account, staff first.", {
+      users: array(ref("StaffMember")),
+      truncated: boolean_("Whether the list was cut short."),
+    }),
+    StaffInput: object("A change to one account.", { staff: boolean_("On staff, or not.") }, ["staff"]),
 
     /* -------------------------------- auth -------------------------------- */
     RegisterInput: object(
@@ -2123,6 +2165,7 @@ function schemas(): Record<string, Json> {
       verified: boolean_("Whether the address has been verified."),
       createdAt: timestamp("When the account was created."),
       siteEditor: boolean_("May change the public website. Granted from the PocketBase dashboard, never by the account itself."),
+      staff: boolean_("Keeps the company catalogue. Granted by another member of staff, never by the account itself."),
       preferences: ref("Preferences"),
     }),
     SessionEnvelope: object("What the auth endpoints answer with.", { user: ref("SessionUser") }, ["user"]),

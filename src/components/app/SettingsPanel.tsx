@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   UserRound,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ApiKeys } from "./ApiKeys";
+import { StaffList } from "./StaffList";
 import { TelegramNotifications } from "./TelegramNotifications";
 import { Section } from "./common";
 import { api, type Meta, type SessionUser } from "@/lib/api";
@@ -62,7 +64,7 @@ type Props = {
   onNotice: (lines: string[]) => void;
 };
 
-type Tab = "general" | "appearance" | "documents" | "account" | "api" | "notifications" | "data";
+type Tab = "general" | "appearance" | "documents" | "account" | "team" | "api" | "notifications" | "data";
 
 /**
  * The sections, in the order a settings page is usually read: what the app
@@ -93,6 +95,12 @@ const TABS: { id: Tab; label: string; Icon: LucideIcon; description: string; aut
   },
   { id: "account", label: "Account", Icon: UserRound, description: "Who you are signed in as, and your password." },
   {
+    id: "team",
+    label: "Team",
+    Icon: Users,
+    description: "Who is staff: the people who see and keep the company catalogue.",
+  },
+  {
     id: "api",
     label: "API keys",
     Icon: KeyRound,
@@ -116,7 +124,9 @@ const TABS: { id: Tab; label: string; Icon: LucideIcon; description: string; aut
  * without pressing it.
  */
 export function SettingsPanel(props: Props) {
-  const current = TABS.find(entry => entry.id === props.tab) ?? TABS[0]!;
+  // Only staff can see who else is; to anyone else the tab does not exist.
+  const tabs = TABS.filter(entry => entry.id !== "team" || props.me.staff);
+  const current = tabs.find(entry => entry.id === props.tab) ?? tabs[0]!;
   const tab = current.id;
   const setTab = props.onTab;
 
@@ -130,7 +140,7 @@ export function SettingsPanel(props: Props) {
           aria-orientation="vertical"
           className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0"
         >
-          {TABS.map(({ id, label, Icon }) => {
+          {tabs.map(({ id, label, Icon }) => {
             const active = id === tab;
             return (
               <button
@@ -191,6 +201,13 @@ export function SettingsPanel(props: Props) {
           />
         ) : tab === "account" ? (
           <AccountTab me={props.me} onError={props.onError} onNotice={props.onNotice} />
+        ) : tab === "team" ? (
+          <Section
+            title="Staff"
+            description="Anyone can sign up, so an account appearing here is not yet anyone you know. Turn the switch on for the people who work here."
+          >
+            <StaffList myId={props.me.id} />
+          </Section>
         ) : tab === "api" ? (
           <Section
             title="Your keys"

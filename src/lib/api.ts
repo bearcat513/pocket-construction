@@ -125,6 +125,8 @@ export type SessionUser = {
   createdAt: string;
   /** May change the public website, and read what its contact form sends. */
   siteEditor: boolean;
+  /** Keeps the company catalogue, and decides who else does. */
+  staff: boolean;
   /** Sent with the session, so the first paint already has the right theme. */
   preferences: Preferences;
 };
@@ -159,12 +161,7 @@ export type Shares = {
   canShare: boolean;
 };
 
-export type Shareable =
-  | "quotes"
-  | "invoices"
-  | "projects"
-  | "catalog-sources"
-  | "proposal-templates";
+export type Shareable = "quotes" | "invoices" | "projects" | "proposal-templates";
 
 /**
  * An API key, as the server will describe one after it exists.
@@ -257,6 +254,9 @@ export type SavedInvoice = { invoice: Invoice; warnings: string[] };
 /** An account, as the pickers that name a person see it. */
 export type DirectoryUser = { id: string; email: string; name: string };
 
+/** An account, as Settings → Team sees it. */
+export type StaffMember = DirectoryUser & { staff: boolean };
+
 export type Meta = {
   url: string;
   reachable: boolean;
@@ -345,6 +345,9 @@ export const api = {
 
   /** Everyone with an account here — what the share and project pickers offer. */
   directory: () => request<{ users: DirectoryUser[]; truncated: boolean }>("/api/directory"),
+  /** Staff only: every account, with whether it is staff. */
+  listStaff: () => request<{ users: StaffMember[]; truncated: boolean }>("/api/staff"),
+  setStaff: (id: string, staff: boolean) => send<StaffMember>(`/api/staff/${encodeURIComponent(id)}`, "PUT", { staff }),
   getPreferences: () => request<Preferences>("/api/preferences"),
   savePreferences: (preferences: Preferences) => send<Preferences>("/api/preferences", "PUT", preferences),
 

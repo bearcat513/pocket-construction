@@ -667,9 +667,8 @@ export function App() {
                 products={products}
                 catalogSources={catalogSources}
                 preferences={preferences}
-                myId={me.id}
+                staff={me.staff}
                 onChanged={refresh}
-                onShare={(kind, id, title) => setSharing({ kind, id, title })}
                 onError={fail}
                 onNotice={notice}
               />

@@ -2,7 +2,7 @@
 
 /**
  * Hands the single-tenant leftovers to the first account that registers, and
- * makes it the website's first editor.
+ * makes it the website's first editor and the first member of staff.
  *
  * Everything created before the accounts migration has no owner, which means
  * no rule matches it and nobody can see it. Rather than stranding that data,
@@ -30,10 +30,12 @@ module.exports.register = () => {
       // The first account is also the one that runs the public website. The
       // flag is stripped from every registration by rules/site.js; this save
       // goes through the app, not a request, so it stands.
-      if (e.record.collection().fields.getByName("siteEditor")) {
-        e.record.set("siteEditor", true);
-        e.app.save(e.record);
-      }
+      // Staff likewise: somebody has to be able to keep the catalogue, and
+      // to make everyone else staff.
+      const fields = e.record.collection().fields;
+      if (fields.getByName("siteEditor")) e.record.set("siteEditor", true);
+      if (fields.getByName("staff")) e.record.set("staff", true);
+      e.app.save(e.record);
 
       let adopted = 0;
       for (const collection of owned) {

@@ -123,6 +123,16 @@ price books, no pricing or approval rules, no recurring/term billing and one cur
 accepted/declined; don't reintroduce an approval status or a per-customer price list without being
 asked.
 
+**The catalogue is the company's, kept by staff.** `products` and `catalog_sources` are readable and
+writable by any account with `staff` on its `users` record (`@request.auth.staff = true`), and by
+nobody else — sign-up is open, so "signed in" is not "works here". A SKU is unique across the whole
+catalogue; `owner` on an item means who created it, not who may edit it. `staff` is granted, never
+claimed: `rules/staff.js` strips it from any request, the first account gets it in
+`setup/adopt.js`, and after that only `lib/staff.js` grants it — a staff member, signed in (never an
+API key), from Settings → Team. Nobody can take themselves off, so there is always someone who can
+put people back. Everything else (estimates, clients, invoices, projects) is still each account's
+own, shared read-only like before.
+
 **A record is called one thing in the code and another on screen, on purpose.** The stored types stay
 `Product`, `Quote` and `Account`; the UI says *item*, *estimate* and *client*. Renaming 32k lines of
 working code would have been a cosmetic change with a migration and a template-token break attached,

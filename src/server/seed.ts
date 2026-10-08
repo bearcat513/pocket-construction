@@ -69,7 +69,13 @@ export type SeedReport = {
  * them. `defaults` is the account's settings — the sample estimate is priced
  * under its markup and overhead like any other new one.
  */
-export async function installSample(token: string, ownerEmail: string, defaults: QuoteDefaults): Promise<SeedReport> {
+export async function installSample(
+  token: string,
+  ownerEmail: string,
+  defaults: QuoteDefaults,
+  /** Whether the caller keeps the company catalogue. Nobody else may add to it. */
+  staff: boolean,
+): Promise<SeedReport> {
   const created: Record<string, number> = {};
   const skipped: Record<string, number> = {};
   const notes: string[] = [];
@@ -80,10 +86,20 @@ export async function installSample(token: string, ownerEmail: string, defaults:
 
   /* ----------------------------- the catalogue ---------------------------- */
 
-  const existingProducts = await listProducts(token);
+  // The catalogue is the company's, so a second member of staff installing the
+  // sample finds it already there and skips it — and somebody who is not staff
+  // cannot add to it at all, so is told rather than refused.
+  if (!staff) {
+    notes.push(
+      "The sample catalogue and its supplier feed were left out: the catalogue is kept by staff. " +
+        "Ask someone on staff to add you, then install the sample again.",
+    );
+  }
+
+  const existingProducts = staff ? await listProducts(token) : [];
   const haveSku = new Set(existingProducts.map(product => product.sku));
 
-  for (const sample of SAMPLE_PRODUCTS) {
+  for (const sample of staff ? SAMPLE_PRODUCTS : []) {
     const parsed = readProduct(sample);
     // A sample that does not validate is this app's bug, not the caller's.
     if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.sku}): ${parsed.error}`, 500);
@@ -152,8 +168,8 @@ export async function installSample(token: string, ownerEmail: string, defaults:
 
   /* --------------------------- the supplier feed --------------------------- */
 
-  const haveSource = new Set((await listCatalogSources(token)).map(source => source.name.toLowerCase()));
-  for (const sample of SAMPLE_CATALOG_SOURCES) {
+  const haveSource = new Set((staff ? await listCatalogSources(token) : []).map(source => source.name.toLowerCase()));
+  for (const sample of staff ? SAMPLE_CATALOG_SOURCES : []) {
     const parsed = readCatalogSource(sample);
     if (!parsed.ok) throw new ApiError(`The built-in sample is invalid (${sample.name}): ${parsed.error}`, 500);
     if (haveSource.has(parsed.value.name.toLowerCase())) {

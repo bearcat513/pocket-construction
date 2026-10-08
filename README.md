@@ -505,8 +505,15 @@ Docker those tests skip and everything else still runs.
 ## Accounts and sharing
 
 Sign-up is open: an email address and a password of at least eight characters make an account.
-Everything you then create is yours, and nobody else's list, count or export can reach it. Your
-catalogue and clients are never shared — an estimate carries its customer's details itself.
+Everything you then create is yours, and nobody else's list, count or export can reach it — except
+the catalogue.
+
+**The catalogue belongs to the company, and staff keep it.** Items and supplier feeds are one shared
+catalogue that every member of staff sees and edits, and that nobody else can see at all. The first
+account to register is staff; after that, staff add and remove each other under **Settings → Team**.
+Because sign-up is open, somebody who registers is not staff until one of you says so. Nobody can
+take themselves off staff — there is always someone left who can put people back — and an API key
+cannot change who is staff, only a signed-in person can.
 
 **Sharing** is read-only and covers the documents worth passing around — estimates, invoices,
 projects, supplier feeds and templates:

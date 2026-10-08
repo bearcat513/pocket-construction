@@ -12,8 +12,10 @@ const MODULES = [
   "setup/adopt.js",
   "rules/ownership.js",
   "rules/site.js",
+  "rules/staff.js",
   "share/routes.js",
   "keys/routes.js",
+  "staff/routes.js",
   "telegram/routes.js",
   "booking/routes.js",
 ];
